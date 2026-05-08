@@ -31,7 +31,15 @@ Run one query by target table name:
 python3 main.py --query dim_batch
 ```
 
+Run with a custom source fetch chunk size:
+
+```bash
+python3 main.py --chunk-size 10000
+```
+
 By default, each query file in `queries/` writes to a destination table with the same name as the file stem. For example, `queries/dim_batch.sql` writes to `dim_batch`.
+
+Large result sets are streamed from the source database in chunks, then written to the destination table chunk by chunk. Database connections and SSH tunnels are opened through context managers and closed after each operation completes.
 
 ## Documentation Standard
 

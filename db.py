@@ -3,7 +3,7 @@ import select
 import socket
 import threading
 from contextlib import contextmanager
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 import pandas as pd
 import paramiko
@@ -165,6 +165,33 @@ def fetch(cfg: Dict[str, Any], sql: str, params: Optional[Tuple] = None) -> pd.D
     df = pd.DataFrame(rows, columns=columns)
     log.debug("fetch → %d rows", len(df))
     return df
+
+
+def fetch_chunks(
+    cfg: Dict[str, Any],
+    sql: str,
+    params: Optional[Tuple] = None,
+    chunk_size: int = CHUNK_SIZE,
+) -> Iterator[pd.DataFrame]:
+    """
+    Run a SELECT through an SSH tunnel and yield DataFrames in batches.
+
+    This uses a server-side cursor so large result sets are streamed instead of
+    loaded into memory all at once. The cursor, DB connection, SSH tunnel, and
+    sockets are closed when iteration finishes or if an exception is raised.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+
+    with _connect(cfg) as conn:
+        with conn.cursor(pymysql.cursors.SSCursor) as cur:
+            cur.execute(sql, params or ())
+            columns = [d[0] for d in cur.description]
+            while True:
+                rows = cur.fetchmany(chunk_size)
+                if not rows:
+                    break
+                yield pd.DataFrame(rows, columns=columns)
 
 
 def delete_user_rows(

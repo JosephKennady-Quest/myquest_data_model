@@ -46,7 +46,8 @@ SOURCE_DB    = CONFIG["source"]
 ANALYTICS_DB = CONFIG["destination"]
 
 # ── Pipeline constants ────────────────────────────────────────────────────────
-CHUNK_SIZE             = 5000   # DB insert batch size (rows per executemany call)
+CHUNK_SIZE             = int(os.getenv("DB_WRITE_CHUNK_SIZE", "5000"))   # DB insert batch size
+QUERY_FETCH_CHUNK_SIZE = int(os.getenv("QUERY_FETCH_CHUNK_SIZE", "5000")) # source rows per fetchmany call
 ALLOC_CHUNK_SIZE       = 500    # learner users per allocation query; keeps allocation DataFrames below OOM-prone sizes
 STAFF_ALLOC_CHUNK_SIZE = 100    # staff users per allocation query; admins can expand to all centre lessons
 LEARNER_TYPES     = (3, 4)

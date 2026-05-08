@@ -2,8 +2,8 @@ import argparse
 import logging
 from pathlib import Path
 
-from config import ANALYTICS_DB, QUERIES_DIR, SOURCE_DB
-from db import fetch, write_table
+from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB
+from db import fetch_chunks, write_table
 
 
 logging.basicConfig(
@@ -41,6 +41,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Read and count rows, but do not write to the destination database.",
     )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=QUERY_FETCH_CHUNK_SIZE,
+        help=(
+            "Rows to fetch from the source database per chunk. "
+            f"Default: {QUERY_FETCH_CHUNK_SIZE}."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -65,38 +74,82 @@ def _query_files(selected_queries: list[str] | None = None) -> list[Path]:
     return [available[query] for query in requested]
 
 
-def run_query_file(query_file: Path, if_exists: str = "replace", dry_run: bool = False) -> int:
+def run_query_file(
+    query_file: Path,
+    if_exists: str = "replace",
+    dry_run: bool = False,
+    chunk_size: int = QUERY_FETCH_CHUNK_SIZE,
+) -> int:
     table_name = query_file.stem
     sql = query_file.read_text(encoding="utf-8")
 
     log.info("Running query %s from %s", table_name, query_file)
-    df = fetch(SOURCE_DB, sql)
-    log.info("Query %s returned %d rows and %d columns", table_name, len(df), len(df.columns))
+    total_rows = 0
+    first_chunk = True
 
-    if dry_run:
-        log.info("Dry run enabled; skipping write for %s", table_name)
-        return len(df)
+    for chunk_number, df in enumerate(fetch_chunks(SOURCE_DB, sql, chunk_size=chunk_size), start=1):
+        total_rows += len(df)
+        log.info(
+            "Query %s chunk %d returned %d rows and %d columns",
+            table_name,
+            chunk_number,
+            len(df),
+            len(df.columns),
+        )
 
-    write_table(ANALYTICS_DB, df, table_name, if_exists=if_exists)
-    log.info("Wrote %s to destination table %s", query_file.name, table_name)
-    return len(df)
+        if dry_run:
+            continue
+
+        write_mode = if_exists if first_chunk else "append"
+        write_table(ANALYTICS_DB, df, table_name, if_exists=write_mode)
+        log.info(
+            "Wrote chunk %d for %s to destination table %s using mode=%s",
+            chunk_number,
+            query_file.name,
+            table_name,
+            write_mode,
+        )
+        first_chunk = False
+
+    if total_rows == 0:
+        log.warning("Query %s returned 0 rows; no destination write was performed.", table_name)
+    elif dry_run:
+        log.info("Dry run enabled; skipped writing %d rows for %s", total_rows, table_name)
+
+    log.info("Query %s complete; total rows read: %d", table_name, total_rows)
+    return total_rows
 
 
 def run(
     selected_queries: list[str] | None = None,
     if_exists: str = "replace",
     dry_run: bool = False,
+    chunk_size: int = QUERY_FETCH_CHUNK_SIZE,
 ) -> None:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than 0")
+
     query_files = _query_files(selected_queries)
     log.info("Queries selected: %s", ", ".join(path.stem for path in query_files))
+    log.info("Source fetch chunk size: %d rows", chunk_size)
 
     total_rows = 0
     for query_file in query_files:
-        total_rows += run_query_file(query_file, if_exists=if_exists, dry_run=dry_run)
+        total_rows += run_query_file(
+            query_file,
+            if_exists=if_exists,
+            dry_run=dry_run,
+            chunk_size=chunk_size,
+        )
 
     log.info("Finished %d query file(s); total rows read: %d", len(query_files), total_rows)
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run(selected_queries=args.query, if_exists=args.if_exists, dry_run=args.dry_run)
+    run(
+        selected_queries=args.query,
+        if_exists=args.if_exists,
+        dry_run=args.dry_run,
+        chunk_size=args.chunk_size,
+    )
