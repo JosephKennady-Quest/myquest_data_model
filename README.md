@@ -14,6 +14,7 @@ This repository stores data model queries and supporting documentation for MyQue
 | Model | Query | Documentation |
 | --- | --- | --- |
 | `dim_batch` | [queries/dim_batch.sql](queries/dim_batch.sql) | [docs/dim_batch_query_columns.md](docs/dim_batch_query_columns.md) |
+| `dim_learner` | [queries/dim_learner.sql](queries/dim_learner.sql) | [docs/dim_learner_query_columns.md](docs/dim_learner_query_columns.md) |
 
 ## Running Queries
 
@@ -29,6 +30,7 @@ Run one query by target table name:
 
 ```bash
 python3 main.py --query dim_batch
+python3 main.py --query dim_learner
 ```
 
 Run with a custom source fetch chunk size:
@@ -55,4 +57,4 @@ Each documented query should explain:
 
 ## Notes
 
-The current `dim_batch` query reads from the `quest_rearch_production` source schema and is documented as an input for the DWH table `dim_batch`.
+The current model queries read from the `quest_rearch_production` source schema and are documented as inputs for DWH dimension tables.
