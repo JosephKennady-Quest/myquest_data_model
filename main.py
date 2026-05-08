@@ -1,9 +1,13 @@
 import argparse
+import json
 import logging
+import re
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
-from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB
-from db import fetch_chunks, write_table
+from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB, _PIPELINE_DIR
+from db import delete_rows_by_ids, fetch_chunks, fetch_updated_ids, write_table
 
 
 logging.basicConfig(
@@ -13,6 +17,48 @@ logging.basicConfig(
 )
 log = logging.getLogger("query_runner")
 
+_STATE_FILE = Path(_PIPELINE_DIR) / ".pipeline_state.json"
+_INCREMENTAL_PATTERN = re.compile(
+    r"--\s*@incremental\s+source_table=(\S+)\s+id_col=(\S+)\s+updated_at_col=(\S+)"
+)
+
+
+# ── State helpers ─────────────────────────────────────────────────────────────
+
+def _load_state() -> dict:
+    if _STATE_FILE.exists():
+        return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+    return {}
+
+
+def _save_state(state: dict) -> None:
+    _STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _get_last_run(table_name: str) -> Optional[str]:
+    return _load_state().get(table_name, {}).get("last_run_at")
+
+
+def _record_run(table_name: str) -> None:
+    state = _load_state()
+    state.setdefault(table_name, {})["last_run_at"] = datetime.now(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    _save_state(state)
+
+
+# ── Incremental config parser ─────────────────────────────────────────────────
+
+def _parse_incremental_config(sql: str) -> Optional[dict]:
+    """Return incremental config dict if the SQL has an @incremental header, else None."""
+    for line in sql.splitlines():
+        m = _INCREMENTAL_PATTERN.match(line.strip())
+        if m:
+            return {"source_table": m.group(1), "id_col": m.group(2), "updated_at_col": m.group(3)}
+    return None
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -31,10 +77,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="Force a full replace even when the query supports incremental runs.",
+    )
+    parser.add_argument(
         "--if-exists",
         choices=["replace", "append"],
         default="replace",
-        help="How to write to the destination table. Default: replace.",
+        help="How to write to the destination table for full runs. Default: replace.",
     )
     parser.add_argument(
         "--dry-run",
@@ -52,6 +103,8 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
+# ── Query file list ───────────────────────────────────────────────────────────
 
 def _query_files(selected_queries: list[str] | None = None) -> list[Path]:
     queries_dir = Path(QUERIES_DIR)
@@ -74,8 +127,11 @@ def _query_files(selected_queries: list[str] | None = None) -> list[Path]:
     return [available[query] for query in requested]
 
 
+# ── Run a single query file ───────────────────────────────────────────────────
+
 def run_query_file(
     query_file: Path,
+    full_refresh: bool = False,
     if_exists: str = "replace",
     dry_run: bool = False,
     chunk_size: int = QUERY_FETCH_CHUNK_SIZE,
@@ -83,45 +139,138 @@ def run_query_file(
     table_name = query_file.stem
     sql = query_file.read_text(encoding="utf-8")
 
+    incremental_cfg = _parse_incremental_config(sql)
+    last_run_at = _get_last_run(table_name)
+
+    use_incremental = (
+        incremental_cfg is not None
+        and not full_refresh
+        and last_run_at is not None
+    )
+
+    if use_incremental:
+        return _run_incremental(
+            query_file, sql, table_name, incremental_cfg, last_run_at, dry_run, chunk_size
+        )
+    else:
+        reason = (
+            "full-refresh flag set" if full_refresh
+            else "no previous run recorded" if last_run_at is None
+            else "no @incremental config"
+        )
+        log.info("Running %s as full replace (%s)", table_name, reason)
+        return _run_full(query_file, sql, table_name, if_exists, dry_run, chunk_size)
+
+
+def _run_full(
+    query_file: Path,
+    sql: str,
+    table_name: str,
+    if_exists: str,
+    dry_run: bool,
+    chunk_size: int,
+) -> int:
     log.info("Running query %s from %s", table_name, query_file)
     total_rows = 0
     first_chunk = True
 
     for chunk_number, df in enumerate(fetch_chunks(SOURCE_DB, sql, chunk_size=chunk_size), start=1):
         total_rows += len(df)
-        log.info(
-            "Query %s chunk %d returned %d rows and %d columns",
-            table_name,
-            chunk_number,
-            len(df),
-            len(df.columns),
-        )
+        log.info("Query %s chunk %d: %d rows, %d columns", table_name, chunk_number, len(df), len(df.columns))
 
         if dry_run:
             continue
 
         write_mode = if_exists if first_chunk else "append"
         write_table(ANALYTICS_DB, df, table_name, if_exists=write_mode)
-        log.info(
-            "Wrote chunk %d for %s to destination table %s using mode=%s",
-            chunk_number,
-            query_file.name,
-            table_name,
-            write_mode,
-        )
+        log.info("Wrote chunk %d for %s (mode=%s)", chunk_number, table_name, write_mode)
         first_chunk = False
 
     if total_rows == 0:
         log.warning("Query %s returned 0 rows; no destination write was performed.", table_name)
     elif dry_run:
         log.info("Dry run enabled; skipped writing %d rows for %s", total_rows, table_name)
+    else:
+        _record_run(table_name)
 
-    log.info("Query %s complete; total rows read: %d", table_name, total_rows)
+    log.info("Query %s complete; total rows: %d", table_name, total_rows)
     return total_rows
 
 
+def _run_incremental(
+    query_file: Path,
+    sql: str,
+    table_name: str,
+    cfg: dict,
+    last_run_at: str,
+    dry_run: bool,
+    chunk_size: int,
+) -> int:
+    source_table = cfg["source_table"]
+    id_col = cfg["id_col"]
+    updated_at_col = cfg["updated_at_col"]
+
+    log.info(
+        "Incremental run for %s — scanning %s.%s > '%s'",
+        table_name, source_table, updated_at_col, last_run_at,
+    )
+
+    updated_ids = fetch_updated_ids(SOURCE_DB, source_table, id_col, updated_at_col, last_run_at)
+
+    if not updated_ids:
+        log.info("No updated records since %s — skipping %s", last_run_at, table_name)
+        return 0
+
+    log.info("%d updated id(s) found for %s", len(updated_ids), table_name)
+
+    # Wrap original query and filter to only the changed IDs
+    placeholders = ", ".join(["%s"] * len(updated_ids))
+    incremental_sql = (
+        f"SELECT * FROM ({sql}) AS _incremental_q "
+        f"WHERE `{id_col}` IN ({placeholders})"
+    )
+
+    total_rows = 0
+    first_chunk = True
+
+    # Dry run: just count without touching destination
+    if dry_run:
+        for chunk_number, df in enumerate(
+            fetch_chunks(SOURCE_DB, incremental_sql, params=tuple(updated_ids), chunk_size=chunk_size),
+            start=1,
+        ):
+            total_rows += len(df)
+            log.info("Dry run chunk %d for %s: %d rows", chunk_number, table_name, len(df))
+        log.info("Dry run: would have written %d rows for %s", total_rows, table_name)
+        return total_rows
+
+    # Delete stale rows then re-insert fresh data
+    delete_rows_by_ids(ANALYTICS_DB, table_name, id_col, updated_ids)
+    log.info("Deleted stale rows for %d id(s) from %s", len(updated_ids), table_name)
+
+    for chunk_number, df in enumerate(
+        fetch_chunks(SOURCE_DB, incremental_sql, params=tuple(updated_ids), chunk_size=chunk_size),
+        start=1,
+    ):
+        total_rows += len(df)
+        write_table(ANALYTICS_DB, df, table_name, if_exists="append")
+        log.info("Wrote incremental chunk %d for %s: %d rows", chunk_number, table_name, len(df))
+        first_chunk = False
+
+    if total_rows == 0:
+        log.warning("Incremental query %s returned 0 rows for the updated ids.", table_name)
+    else:
+        _record_run(table_name)
+
+    log.info("Incremental run for %s complete; rows written: %d", table_name, total_rows)
+    return total_rows
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 def run(
     selected_queries: list[str] | None = None,
+    full_refresh: bool = False,
     if_exists: str = "replace",
     dry_run: bool = False,
     chunk_size: int = QUERY_FETCH_CHUNK_SIZE,
@@ -137,6 +286,7 @@ def run(
     for query_file in query_files:
         total_rows += run_query_file(
             query_file,
+            full_refresh=full_refresh,
             if_exists=if_exists,
             dry_run=dry_run,
             chunk_size=chunk_size,
@@ -149,6 +299,7 @@ if __name__ == "__main__":
     args = parse_args()
     run(
         selected_queries=args.query,
+        full_refresh=args.full_refresh,
         if_exists=args.if_exists,
         dry_run=args.dry_run,
         chunk_size=args.chunk_size,

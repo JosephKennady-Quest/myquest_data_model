@@ -222,6 +222,50 @@ def delete_user_rows(
     log.debug("delete_user_rows → %s (%d user_ids)", table, len(user_ids))
 
 
+def fetch_updated_ids(
+    cfg: Dict[str, Any],
+    source_table: str,
+    id_col: str,
+    updated_at_col: str,
+    since_ts: str,
+) -> list:
+    """Return distinct IDs from source_table where updated_at_col > since_ts."""
+    sql = (
+        f"SELECT DISTINCT `{id_col}` FROM {source_table} "
+        f"WHERE `{updated_at_col}` > %s"
+    )
+    with _connect(cfg) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (since_ts,))
+            rows = cur.fetchall()
+    ids = [r[0] for r in rows]
+    log.debug("fetch_updated_ids → %d ids from %s since %s", len(ids), source_table, since_ts)
+    return ids
+
+
+def delete_rows_by_ids(
+    cfg: Dict[str, Any],
+    table: str,
+    id_col: str,
+    ids: list,
+) -> None:
+    """Delete rows from destination table where id_col is in ids."""
+    if not ids:
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    with _connect(cfg) as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(f"DELETE FROM `{table}` WHERE `{id_col}` IN ({ph})", tuple(ids))
+            except pymysql.err.ProgrammingError as exc:
+                if exc.args[0] == 1146:  # table doesn't exist yet — nothing to delete
+                    return
+                raise
+        conn.commit()
+    log.debug("delete_rows_by_ids → removed %d ids from %s", len(ids), table)
+
+
+
 _DTYPE_TO_MYSQL = {
     "object":         "TEXT",
     "string":         "TEXT",

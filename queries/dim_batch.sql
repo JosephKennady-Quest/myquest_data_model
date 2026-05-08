@@ -1,7 +1,17 @@
+<<<<<<< HEAD
+=======
+-- @incremental source_table=quest_rearch_production.batches id_col=batch_id updated_at_col=updated_at
+
+>>>>>>> da0fe27 (Add incremental pipeline run support with full-refresh option)
 SELECT a.*,
 batch_trade.trade_id
 
 FROM (SELECT
+<<<<<<< HEAD
+=======
+    b.created_at,
+    b.updated_at,
+>>>>>>> da0fe27 (Add incremental pipeline run support with full-refresh option)
     b.id AS batch_id,
     b.name AS batch_name,
     c.id AS centre_id,
