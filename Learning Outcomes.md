@@ -1,0 +1,13 @@
+dim_batch
+dim_date
+dim_learner
+dim_phase
+dim_skill
+dim_subject
+dim_trade
+fact_course_progress
+fact_learning_event
+fact_lesson_progress
+fact_ple_response
+fact_skill_score
+fact_subject_progress

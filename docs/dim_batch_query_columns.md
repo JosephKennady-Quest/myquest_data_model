@@ -1,6 +1,6 @@
 # dim_batch Query Column Documentation
 
-Source query: `queries/dim_batch.sql.mysql-notebook`
+Source query: `queries/dim_batch.sql`
 
 This query produces batch-level records for active centres and non-deleted batches, with project mapping resolved from phase first and centre fallback second. The query is intended to populate or validate the DWH dimension `dim_batch`.
 
@@ -103,4 +103,3 @@ Reason:
 | Production source schema | `quest_rearch_production` |
 | DWH source status | The query reads from production source tables, not DWH tables. |
 | Output DWH columns | `batch_id`, `batch_name`, `centre_id`, `phase_id`, `project_id`, `start_date`, `end_date`, `batch_type`, `is_ple`, `status`, `trade_id` |
-

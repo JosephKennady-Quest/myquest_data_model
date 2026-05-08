@@ -13,7 +13,7 @@ This repository stores data model queries and supporting documentation for MyQue
 
 | Model | Query | Documentation |
 | --- | --- | --- |
-| `dim_batch` | [queries/dim_batch.sql.mysql-notebook](queries/dim_batch.sql.mysql-notebook) | [docs/dim_batch_query_columns.md](docs/dim_batch_query_columns.md) |
+| `dim_batch` | [queries/dim_batch.sql](queries/dim_batch.sql) | [docs/dim_batch_query_columns.md](docs/dim_batch_query_columns.md) |
 
 ## Documentation Standard
 
