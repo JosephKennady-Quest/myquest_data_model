@@ -349,3 +349,64 @@ def write_table(
 
     log.info("write_table → %d rows written to %s.%s",
              len(df), cfg["db"]["database"], table)
+
+
+def fetch_updated_at_stats(
+    cfg: Dict[str, Any],
+    table: str,
+    updated_at_col: str = "updated_at",
+) -> Tuple[Optional[str], Optional[str]]:
+    """Return (min_updated_at, max_updated_at) from a destination table, or (None, None) if missing."""
+    sql = f"SELECT MIN(`{updated_at_col}`), MAX(`{updated_at_col}`) FROM `{table}`"
+    with _connect(cfg) as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(sql)
+                row = cur.fetchone()
+                if row:
+                    return (
+                        str(row[0]) if row[0] is not None else None,
+                        str(row[1]) if row[1] is not None else None,
+                    )
+            except pymysql.err.ProgrammingError as exc:
+                if exc.args[0] == 1146:  # table doesn't exist
+                    return None, None
+                raise
+    return None, None
+
+
+_CREATE_RUN_LOG = """
+CREATE TABLE IF NOT EXISTS `pipeline_run_log` (
+    `id`               INT AUTO_INCREMENT PRIMARY KEY,
+    `run_at`           DATETIME NOT NULL,
+    `table_name`       VARCHAR(128) NOT NULL,
+    `mode`             VARCHAR(16) NOT NULL,
+    `rows_written`     INT NOT NULL,
+    `dry_run`          TINYINT(1) NOT NULL DEFAULT 0,
+    `last_updated_at`  DATETIME,
+    `latest_updated_at` DATETIME
+)
+"""
+
+
+def write_run_log(
+    cfg: Dict[str, Any],
+    table_name: str,
+    mode: str,
+    rows_written: int,
+    dry_run: bool,
+    last_updated_at: Optional[str],
+    latest_updated_at: Optional[str],
+) -> None:
+    """Insert one row into pipeline_run_log."""
+    with _connect(cfg) as conn:
+        with conn.cursor() as cur:
+            cur.execute(_CREATE_RUN_LOG)
+            cur.execute(
+                """INSERT INTO `pipeline_run_log`
+                   (run_at, table_name, mode, rows_written, dry_run, last_updated_at, latest_updated_at)
+                   VALUES (NOW(), %s, %s, %s, %s, %s, %s)""",
+                (table_name, mode, rows_written, int(dry_run), last_updated_at, latest_updated_at),
+            )
+        conn.commit()
+    log.debug("write_run_log → logged %s mode=%s rows=%d", table_name, mode, rows_written)

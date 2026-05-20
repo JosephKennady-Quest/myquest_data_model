@@ -55,6 +55,61 @@ Nullability below is based on the query logic, not the physical database schema.
 | `users` to placement derived table `pd` | `LEFT JOIN` | Preserves learners even when no qualifying enrolment placement exists. |
 | `placements` to `placement_status` | `LEFT JOIN` | Preserves placement rows even when status lookup is missing; status name can be `NULL`. |
 
+## Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    users {
+        string id PK
+        string centre_id FK
+        int is_ple
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+        int status
+    }
+    student_details {
+        string user_id FK
+        string trade_id
+        string guardian_income
+        string educational_qualification_id FK
+    }
+    educational_qualifications {
+        string id PK
+        string name
+    }
+    centre_project {
+        string centre_id FK
+        string project_id FK
+    }
+    projects {
+        string id PK
+        string program_id FK
+    }
+    programs {
+        string id PK
+        string name
+    }
+    placements {
+        string user_id FK
+        string placement_type_id
+        int is_complete
+        datetime updated_at
+        datetime deleted_at
+    }
+    placement_status {
+        string id PK
+        string name
+    }
+    users ||--o{ student_details : "INNER JOIN on user_id"
+    student_details }o--|| educational_qualifications : "INNER JOIN on educational_qualification_id"
+    users ||--o{ centre_project : "INNER JOIN on centre_id"
+    centre_project }o--|| projects : "INNER JOIN on project_id"
+    projects }o--|| programs : "INNER JOIN on program_id"
+    users ||--o{ placements : "LEFT JOIN via derived table on user_id"
+    placements }o--o| placement_status : "LEFT JOIN on placement_status_id"
+```
+
 ## Placement Status Logic
 
 The employment status field is derived in two steps:

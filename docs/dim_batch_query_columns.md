@@ -46,6 +46,64 @@ Nullability below is based on the query logic, not the physical database schema.
 | `status` | `quest_rearch_production.batches` alias `b` | `status` | Direct select: `b.status` after `b.status != 4` filter | Preserves batch status for reporting while excluding status `4` records from the dimension output. | No if source `b.status` is non-null. The `b.status != 4` predicate also excludes `NULL` statuses in SQL three-valued logic. | `dim_batch` | `status` | No, source is production schema. |
 | `trade_id` | `quest_rearch_production.student_details` alias `sd` via derived table `batch_trade` | `trade_id` | Select distinct batch-trade pairs where both IDs are non-null, then left join to batch output by `batch_id`. | Adds trade mapping observed from student records. A batch can map to multiple trades, so this can increase row count. | Yes. Final join is left joined, so batches with no valid student trade mapping return `NULL`. | `dim_batch` | `trade_id` | No, source is production schema. |
 
+## Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    batches {
+        string id PK
+        string centre_id FK
+        int status
+        date start_date
+        date end_date
+        int type
+        datetime deleted_at
+        datetime updated_at
+    }
+    centres {
+        string id PK
+        int status
+        datetime deleted_at
+    }
+    batch_phase {
+        string batch_id FK
+        string phase_id
+    }
+    phase_project {
+        string phase_id FK
+        string project_id FK
+    }
+    projects_phase["projects (pr_phase)"] {
+        string id PK
+        int status
+        datetime deleted_at
+    }
+    centre_project {
+        string centre_id FK
+        string project_id FK
+    }
+    projects_centre["projects (pr_centre)"] {
+        string id PK
+        int status
+        datetime deleted_at
+    }
+    batches_non_ple {
+        string batch_id FK
+    }
+    student_details {
+        string batch_id FK
+        string trade_id FK
+    }
+    batches }o--|| centres : "INNER JOIN on centre_id"
+    batches ||--o{ batch_phase : "LEFT JOIN on batch_id"
+    batch_phase ||--o{ phase_project : "LEFT JOIN on phase_id"
+    phase_project }o--|| projects_phase : "LEFT JOIN on project_id"
+    batches ||--o{ centre_project : "LEFT JOIN on centre_id when phase_id IS NULL"
+    centre_project }o--|| projects_centre : "LEFT JOIN on project_id"
+    batches ||--o| batches_non_ple : "LEFT JOIN on batch_id"
+    batches ||--o{ student_details : "LEFT JOIN via batch_trade derived table"
+```
+
 ## Project Mapping Logic
 
 The query intentionally prevents incorrect project duplication caused by centre-level project mappings.

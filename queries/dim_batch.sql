@@ -1,17 +1,18 @@
-<<<<<<< HEAD
-=======
--- @incremental source_table=quest_rearch_production.batches id_col=batch_id updated_at_col=updated_at
+-- @incremental source_table=quest_rearch_production.batches id_col=id updated_at_col=updated_at dest_id_col=batch_id
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Table    : dim_batch
+-- Grain    : one row per batch-trade combination (trade_id can multiply rows per batch)
+-- Mode     : incremental
+-- Source   : quest_rearch_production.batches, quest_rearch_production.centres, quest_rearch_production.batch_phase, quest_rearch_production.phase_project, quest_rearch_production.projects, quest_rearch_production.centre_project, quest_rearch_production.batches_non_ple, quest_rearch_production.student_details
+-- Docs     : docs/dim_batch_query_columns.md
+-- ─────────────────────────────────────────────────────────────────────────────
 
->>>>>>> da0fe27 (Add incremental pipeline run support with full-refresh option)
 SELECT a.*,
 batch_trade.trade_id
 
 FROM (SELECT
-<<<<<<< HEAD
-=======
     b.created_at,
     b.updated_at,
->>>>>>> da0fe27 (Add incremental pipeline run support with full-refresh option)
     b.id AS batch_id,
     b.name AS batch_name,
     c.id AS centre_id,
@@ -91,7 +92,9 @@ INNER JOIN quest_rearch_production.centres c
    AND c.status = 1
    AND c.deleted_at IS NULL
 
-WHERE c.id = '54df26ad-0b01-4bed-8470-27d5ae3a63e0'
+WHERE 
+    1=1
+--   AND c.id = '54df26ad-0b01-4bed-8470-27d5ae3a63e0'
   AND b.status != 4
   AND b.deleted_at IS NULL
 

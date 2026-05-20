@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB, _PIPELINE_DIR
-from db import delete_rows_by_ids, fetch_chunks, fetch_updated_ids, write_table
+from db import delete_rows_by_ids, fetch_chunks, fetch_updated_ids, fetch_updated_at_stats, write_run_log, write_table
 
 
 logging.basicConfig(
@@ -20,6 +20,7 @@ log = logging.getLogger("query_runner")
 _STATE_FILE = Path(_PIPELINE_DIR) / ".pipeline_state.json"
 _INCREMENTAL_PATTERN = re.compile(
     r"--\s*@incremental\s+source_table=(\S+)\s+id_col=(\S+)\s+updated_at_col=(\S+)"
+    r"(?:\s+dest_id_col=(\S+))?"
 )
 
 
@@ -54,7 +55,7 @@ def _parse_incremental_config(sql: str) -> Optional[dict]:
     for line in sql.splitlines():
         m = _INCREMENTAL_PATTERN.match(line.strip())
         if m:
-            return {"source_table": m.group(1), "id_col": m.group(2), "updated_at_col": m.group(3)}
+            return {"source_table": m.group(1), "id_col": m.group(2), "updated_at_col": m.group(3), "dest_id_col": m.group(4) or m.group(2)}
     return None
 
 
@@ -171,6 +172,7 @@ def _run_full(
     chunk_size: int,
 ) -> int:
     log.info("Running query %s from %s", table_name, query_file)
+    last_updated_at, _ = fetch_updated_at_stats(ANALYTICS_DB, table_name)
     total_rows = 0
     first_chunk = True
 
@@ -192,6 +194,8 @@ def _run_full(
         log.info("Dry run enabled; skipped writing %d rows for %s", total_rows, table_name)
     else:
         _record_run(table_name)
+        _, latest_updated_at = fetch_updated_at_stats(ANALYTICS_DB, table_name)
+        write_run_log(ANALYTICS_DB, table_name, "full", total_rows, dry_run, last_updated_at, latest_updated_at)
 
     log.info("Query %s complete; total rows: %d", table_name, total_rows)
     return total_rows
@@ -209,16 +213,19 @@ def _run_incremental(
     source_table = cfg["source_table"]
     id_col = cfg["id_col"]
     updated_at_col = cfg["updated_at_col"]
+    dest_id_col = cfg["dest_id_col"]
 
     log.info(
         "Incremental run for %s — scanning %s.%s > '%s'",
         table_name, source_table, updated_at_col, last_run_at,
     )
+    last_updated_at, _ = fetch_updated_at_stats(ANALYTICS_DB, table_name)
 
     updated_ids = fetch_updated_ids(SOURCE_DB, source_table, id_col, updated_at_col, last_run_at)
 
     if not updated_ids:
         log.info("No updated records since %s — skipping %s", last_run_at, table_name)
+        write_run_log(ANALYTICS_DB, table_name, "incremental", 0, dry_run, last_updated_at, last_updated_at)
         return 0
 
     log.info("%d updated id(s) found for %s", len(updated_ids), table_name)
@@ -227,7 +234,7 @@ def _run_incremental(
     placeholders = ", ".join(["%s"] * len(updated_ids))
     incremental_sql = (
         f"SELECT * FROM ({sql}) AS _incremental_q "
-        f"WHERE `{id_col}` IN ({placeholders})"
+        f"WHERE `{dest_id_col}` IN ({placeholders})"
     )
 
     total_rows = 0
@@ -245,7 +252,7 @@ def _run_incremental(
         return total_rows
 
     # Delete stale rows then re-insert fresh data
-    delete_rows_by_ids(ANALYTICS_DB, table_name, id_col, updated_ids)
+    delete_rows_by_ids(ANALYTICS_DB, table_name, dest_id_col, updated_ids)
     log.info("Deleted stale rows for %d id(s) from %s", len(updated_ids), table_name)
 
     for chunk_number, df in enumerate(
@@ -262,6 +269,8 @@ def _run_incremental(
     else:
         _record_run(table_name)
 
+    _, latest_updated_at = fetch_updated_at_stats(ANALYTICS_DB, table_name)
+    write_run_log(ANALYTICS_DB, table_name, "incremental", total_rows, dry_run, last_updated_at, latest_updated_at)
     log.info("Incremental run for %s complete; rows written: %d", table_name, total_rows)
     return total_rows
 
