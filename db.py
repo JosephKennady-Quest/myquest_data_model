@@ -379,7 +379,11 @@ def fetch_updated_at_stats(
                         str(row[1]) if row[1] is not None else None,
                     )
             except pymysql.err.ProgrammingError as exc:
-                if exc.args[0] == 1146:  # table doesn't exist
+                if exc.args[0] in (1146, 1054):  # table doesn't exist / column doesn't exist
+                    return None, None
+                raise
+            except pymysql.err.OperationalError as exc:
+                if exc.args[0] == 1054:  # Unknown column
                     return None, None
                 raise
     return None, None
