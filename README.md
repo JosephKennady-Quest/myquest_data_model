@@ -1,6 +1,6 @@
 # MyQuest Data Model
 
-SQL query pipeline that reads from the production MySQL source (`quest_rearch_production`) through an SSH tunnel and writes dimension/fact tables into the analytics destination database (`myquest_data_model`).
+SQL query pipeline that reads from the production MySQL source (`quest_rearch_production`) through an SSH tunnel and writes dimension and fact tables into the analytics destination database (`myquest_data_model`).
 
 ---
 
@@ -11,10 +11,12 @@ SQL query pipeline that reads from the production MySQL source (`quest_rearch_pr
 | `queries/` | One `.sql` file per destination table. File stem = destination table name. |
 | `docs/` | Column-level documentation, mapping notes, and business logic per query. |
 | `domain/` | Domain knowledge docs (learning outcomes, terminology, etc.). |
+| `python_query/` | Draft or exploratory SQL files not yet promoted to the main pipeline. |
 | `DB_Config/` | SSH private key files (`.pem`). **Not committed — add locally.** |
 | `main.py` | Pipeline entry point. |
 | `db.py` | SSH tunnel, MySQL connection, fetch/write helpers. |
 | `config.py` | Environment variable loading and shared constants. |
+| `.env.example` | Template for required environment variables. Copy to `.env` and fill in. |
 | `.pipeline_state.json` | Auto-generated. Tracks last successful run timestamp per table for incremental runs. **Not committed.** |
 
 ---
@@ -121,7 +123,7 @@ State is stored per-table in `.pipeline_state.json` (auto-created, git-ignored).
 
 ## Destination-Only Queries
 
-Queries that read from tables already in the analytics destination database (rather than the production source) declare the following header:
+Queries that read from tables already in `myquest_data_model` (rather than the production source) declare the following header:
 
 ```sql
 -- @dest_only
@@ -185,8 +187,8 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | --- | --- | --- | --- |
 | `dim_batch` | One row per batch-trade combination | [queries/dim_batch.sql](queries/dim_batch.sql) | [docs/dim_batch_query_columns.md](docs/dim_batch_query_columns.md) |
 | `dim_centre` | One row per centre | [queries/dim_centre.sql](queries/dim_centre.sql) | [docs/dim_centre.md](docs/dim_centre.md) |
-| `dim_educator` | One row per educator (fan-out risk via centre_project) | [queries/dim_educator.sql](queries/dim_educator.sql) | [docs/dim_educator.md](docs/dim_educator.md) |
-| `dim_learner` | One row per learner (fan-out risk via centre_project) | [queries/dim_learner.sql](queries/dim_learner.sql) | [docs/dim_learner_query_columns.md](docs/dim_learner_query_columns.md) |
+| `dim_educator` | One row per educator | [queries/dim_educator.sql](queries/dim_educator.sql) | [docs/dim_educator.md](docs/dim_educator.md) |
+| `dim_learner` | One row per learner | [queries/dim_learner.sql](queries/dim_learner.sql) | [docs/dim_learner_query_columns.md](docs/dim_learner_query_columns.md) |
 | `dim_phase` | One row per phase | [queries/dim_phase.sql](queries/dim_phase.sql) | [docs/dim_phase.md](docs/dim_phase.md) |
 | `dim_program` | One row per program | [queries/dim_program.sql](queries/dim_program.sql) | [docs/dim_program.md](docs/dim_program.md) |
 | `dim_subject` | One row per subject | [queries/dim_subject.sql](queries/dim_subject.sql) | [docs/dim_subject.md](docs/dim_subject.md) |
@@ -197,15 +199,18 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | --- | --- | --- | --- |
 | `fact_learning_event` | One row per completed learning activity | [queries/fact_learning_event.sql](queries/fact_learning_event.sql) | [docs/fact_learning_event.md](docs/fact_learning_event.md) |
 | `fact_lesson_progress` | One row per learner-lesson combination | [queries/fact_lesson_progress.sql](queries/fact_lesson_progress.sql) | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
-| `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
 | `fact_ple_response` | One row per PLE assessment response | [queries/fact_ple_response.sql](queries/fact_ple_response.sql) | [docs/fact_ple_response.md](docs/fact_ple_response.md) |
 | `fact_skill_scores` | One row per skill-user score | [queries/fact_skill_scores.sql](queries/fact_skill_scores.sql) | [docs/fact_skill_scores.md](docs/fact_skill_scores.md) |
+| `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
 
 ### Draft / In Progress
 
-| Model | Status | Query |
+| Model | Status | File |
 | --- | --- | --- |
 | `draft_dim_geography` | Empty stub | [queries/draft_dim_geography.sql](queries/draft_dim_geography.sql) |
+| `draft_fact_course_progress` | Draft / exploratory | [python_query/draft_fact_course_progress.sql](python_query/draft_fact_course_progress.sql) |
+| `draft_fact_lesson_progress` | Draft / exploratory | [python_query/draft_fact_lesson_progress.sql](python_query/draft_fact_lesson_progress.sql) |
+| `draft_fact_subject_progress` | Draft / exploratory | [python_query/draft_fact_subject_progress.sql](python_query/draft_fact_subject_progress.sql) |
 
 ---
 
@@ -214,7 +219,7 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 Each query doc in `docs/` covers:
 
 - **Query Grain** — what one row represents and any fan-out risks
-- **Incremental Configuration** — source table, ID columns, updated-at column
+- **Incremental Configuration** — source table, ID columns, updated-at column (or `@dest_only` note)
 - **Global Filters** — all WHERE conditions with business reason
 - **Output Columns** — source table, source column, transform logic, nullability
 - **Entity Relationship Diagram** — Mermaid ERD of all joined source tables
