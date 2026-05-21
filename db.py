@@ -76,6 +76,7 @@ def _tunnel(ssh: Dict[str, Any]):
     log.debug("SSH connected → %s@%s", ssh["username"], ssh["host"])
 
     transport = client.get_transport()
+    transport.set_keepalive(30)  # send keepalive every 30s to prevent idle-drop on long fetches
 
     # ── 2. Bind a free local port ─────────────────────────────────────────────
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -146,6 +147,9 @@ def _connect(cfg: Dict[str, Any]):
             password=cfg["db"]["password"],
             database=cfg["db"]["database"],
             charset="utf8mb4",
+            connect_timeout=30,
+            read_timeout=3600,   # allow up to 1h for large streaming queries
+            write_timeout=3600,
         )
         try:
             yield conn
