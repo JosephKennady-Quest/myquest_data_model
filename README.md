@@ -119,6 +119,27 @@ State is stored per-table in `.pipeline_state.json` (auto-created, git-ignored).
 
 ---
 
+## Destination-Only Queries
+
+Queries that read from tables already in the analytics destination database (rather than the production source) declare the following header:
+
+```sql
+-- @dest_only
+```
+
+**How it works:**
+
+The pipeline detects this flag and connects to `ANALYTICS_DB` (destination) instead of `SOURCE_DB` (production source) when fetching rows. This is used for queries that transform or roll up tables that were previously written to the analytics DB by an earlier pipeline step.
+
+### Queries with `@dest_only`
+
+| Query / Table | Source table (in analytics DB) | Description |
+| --- | --- | --- |
+| `fact_lesson_progress` | `quest_analytics.main_learning_activity_myquest_ael_lesson` | Per-learner, per-lesson completion and time spent |
+| `fact_subject_progress` | `quest_analytics.main_learning_activity_myquest_ael` | Per-learner, per-subject completion and progress percentage |
+
+---
+
 ## Run Logs
 
 Every successful run appends a row to the `pipeline_run_log` table in the analytics database. The table is auto-created on first run.
@@ -144,12 +165,14 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
    -- ─────────────────────────────────────────────────────────────────────────────
    -- Table    : <table_name>
    -- Grain    : <one line grain description>
-   -- Mode     : incremental / full
+   -- Mode     : incremental / full / full (dest_only)
    -- Source   : <source tables, comma-separated>
    -- Docs     : docs/<table_name>.md
    -- ─────────────────────────────────────────────────────────────────────────────
    ```
-   `dest_id_col` must match the column name **in the query output** (the alias in your SELECT), not the source table column name.
+   - Use `-- @incremental ...` if the query supports incremental runs from the production source.
+   - Use `-- @dest_only` instead if the query reads from a table already in the analytics destination DB.
+   - `dest_id_col` must match the column name **in the query output** (the alias in your SELECT), not the source table column name.
 3. Create `docs/<table_name>.md` following the documentation standard below.
 
 ---
@@ -173,7 +196,8 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | Model | Grain | Query | Documentation |
 | --- | --- | --- | --- |
 | `fact_learning_event` | One row per completed learning activity | [queries/fact_learning_event.sql](queries/fact_learning_event.sql) | [docs/fact_learning_event.md](docs/fact_learning_event.md) |
-| `fact_lesson_progress` | One row per learner-lesson attempt *(stub — not yet implemented)* | [queries/fact_lesson_progress.sql](queries/fact_lesson_progress.sql) | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
+| `fact_lesson_progress` | One row per learner-lesson combination | [queries/fact_lesson_progress.sql](queries/fact_lesson_progress.sql) | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
+| `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
 | `fact_ple_response` | One row per PLE assessment response | [queries/fact_ple_response.sql](queries/fact_ple_response.sql) | [docs/fact_ple_response.md](docs/fact_ple_response.md) |
 | `fact_skill_scores` | One row per skill-user score | [queries/fact_skill_scores.sql](queries/fact_skill_scores.sql) | [docs/fact_skill_scores.md](docs/fact_skill_scores.md) |
 

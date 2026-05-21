@@ -2,52 +2,59 @@
 
 Source query: `queries/fact_lesson_progress.sql`
 
-> **Draft / stub — no SQL implemented yet.** The query file currently contains only a list of planned output column names. This document describes the intended structure of the `fact_lesson_progress` table based on those planned columns. All sections below reflect the planned design and are subject to change once the SQL is written.
-
-This table is intended to capture per-learner, per-lesson progress records, tracking completion status, time spent, and attempt counts for each lesson a learner has engaged with. It will serve as a granular engagement fact table, supporting lesson-level analysis across the learner, lesson, course, and subject dimensions.
+This query produces per-learner, per-lesson progress records from the pre-aggregated `main_learning_activity_myquest_ael_lesson` table in the analytics destination database. It captures completion status and time spent for each lesson a learner has engaged with, supporting lesson-level analysis across learner, subject, batch, and centre dimensions.
 
 ## Query Grain
 
-Planned grain: one row per learner-lesson combination (`progress_id`). Fan-out risks cannot be assessed until the SQL is written. The presence of a surrogate `progress_id` suggests the grain may be one row per progress record rather than strictly one per learner-lesson pair.
+One row per learner-lesson combination (`user_id`, `lesson_id`). No aggregation is applied — the query assumes the source table `main_learning_activity_myquest_ael_lesson` already holds one pre-aggregated row per learner-lesson pair.
 
 ## Incremental Configuration
 
-This section will be populated once the SQL and `@incremental` configuration are written. No incremental settings have been defined yet.
+This query uses `-- @dest_only` and reads from the analytics destination database (`quest_ple_analytics`), not the production source. Incremental mode is not configured. The pipeline runs a full replace on each execution.
 
 ## Global Filters
 
-No global filters defined yet. This section will be populated once the SQL is written.
+No global filters are applied. All rows from `main_learning_activity_myquest_ael_lesson` are included.
 
 ## Output Columns
 
-The following columns are planned based on the stub file. Nullability, source tables, and transform logic are not yet defined.
-
 | Output column | Source table | Source column | Transform / logic | Reason for inclusion | Nullable in query |
 | --- | --- | --- | --- | --- | --- |
-| `progress_id` | TBD | TBD | Surrogate or source primary key for the progress record. | Primary grain key for the fact table. | TBD |
-| `user_id` | TBD | TBD | Foreign key linking to the learner dimension. | Identifies the learner associated with the progress record. | TBD |
-| `lesson_id` | TBD | TBD | Foreign key linking to the lesson. | Identifies the lesson being tracked. | TBD |
-| `course_id` | TBD | TBD | Foreign key linking to the course. | Supports course-level rollup of lesson progress. | TBD |
-| `subject_id` | TBD | TBD | Foreign key linking to the subject dimension. | Supports subject-level analysis. | TBD |
-| `time_spent_secs` | TBD | TBD | Total time spent on the lesson, in seconds. | Core engagement metric for lesson-level analytics. | TBD |
-| `completed_flag` | TBD | TBD | Boolean or integer flag indicating lesson completion. | Used to filter and measure completion rates. | TBD |
-| `attempts` | TBD | TBD | Count of attempts on the lesson. | Supports difficulty and engagement analysis. | TBD |
-| `completed_at` | TBD | TBD | Timestamp when the lesson was completed. | Enables time-based completion analysis. | TBD |
+| `user_id` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `user_id` | Direct select: `m.user_id` | Identifies the learner. Links to the learner dimension. | Depends on source |
+| `centre_id` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `centre_id` | Direct select: `m.centre_id` | Links the record to the learner's centre for centre-level analysis. | Depends on source |
+| `batch_id` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `batch_id` | Direct select: `m.batch_id` | Links the record to the learner's batch. | Depends on source |
+| `subject_id` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `subject_id` | Direct select: `m.subject_id` | Links the record to the subject dimension. | Depends on source |
+| `lesson_id` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `lesson_id` | Direct select: `m.lesson_id` | Identifies the specific lesson. Forms part of the fact grain. | Depends on source |
+| `completed` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `completed` | Direct select: `m.completed` | Boolean/integer flag indicating whether the lesson was completed. | Depends on source |
+| `time_spent_secs` | `quest_analytics.main_learning_activity_myquest_ael_lesson` alias `m` | `duration` | `m.duration AS time_spent_secs` | Total time the learner spent on this lesson, in seconds. | Depends on source |
 
 ## Entity Relationship Diagram
 
-Not available — SQL not yet implemented. ERD will be added once the query is written.
+```mermaid
+erDiagram
+    main_learning_activity_myquest_ael_lesson {
+        int user_id FK
+        int centre_id FK
+        int batch_id FK
+        int subject_id FK
+        int lesson_id FK
+        int completed
+        int duration
+    }
+```
+
+This query reads from a single pre-aggregated table — no joins are performed.
 
 ## Join and Cardinality Notes
 
-Not available — SQL not yet implemented.
+No joins. The query selects directly from the pre-aggregated `main_learning_activity_myquest_ael_lesson` table, which is assumed to already hold one row per learner-lesson combination.
 
 ## DWH Interpretation
 
 | Item | Value |
 | --- | --- |
 | Intended DWH table | `fact_lesson_progress` |
-| DWH grain risk | Cannot be assessed until SQL is implemented. Planned grain is one row per progress record (`progress_id`). |
-| Production source schema | `quest_rearch_production` |
-| DWH source status | The query will read from production source tables, not DWH tables. |
-| Output DWH columns | `progress_id`, `user_id`, `lesson_id`, `course_id`, `subject_id`, `time_spent_secs`, `completed_flag`, `attempts`, `completed_at` |
+| DWH grain risk | Grain depends on the upstream `main_learning_activity_myquest_ael_lesson` table. If that table contains duplicate `(user_id, lesson_id)` rows, this fact table will also contain duplicates. |
+| Source schema | `quest_ple_analytics` (destination / analytics DB) |
+| DWH source status | Reads from a pre-aggregated analytics table, not directly from the production source. The `@dest_only` flag is set — the pipeline connects to the destination DB for this query. |
+| Output DWH columns | `user_id`, `centre_id`, `batch_id`, `subject_id`, `lesson_id`, `completed`, `time_spent_secs` |

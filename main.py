@@ -22,6 +22,7 @@ _INCREMENTAL_PATTERN = re.compile(
     r"--\s*@incremental\s+source_table=(\S+)\s+id_col=(\S+)\s+updated_at_col=(\S+)"
     r"(?:\s+dest_id_col=(\S+))?"
 )
+_DEST_ONLY_PATTERN = re.compile(r"--\s*@dest_only\b")
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -49,6 +50,11 @@ def _record_run(table_name: str) -> None:
 
 
 # ── Incremental config parser ─────────────────────────────────────────────────
+
+def _is_dest_only(sql: str) -> bool:
+    """Return True if the SQL has a @dest_only header (query runs against the destination DB)."""
+    return any(_DEST_ONLY_PATTERN.match(line.strip()) for line in sql.splitlines())
+
 
 def _parse_incremental_config(sql: str) -> Optional[dict]:
     """Return incremental config dict if the SQL has an @incremental header, else None."""
@@ -149,7 +155,12 @@ def run_query_file(
         return 0
 
     incremental_cfg = _parse_incremental_config(sql)
+    dest_only = _is_dest_only(sql)
+    fetch_db = ANALYTICS_DB if dest_only else SOURCE_DB
     last_run_at = _get_last_run(table_name)
+
+    if dest_only:
+        log.info("Running %s against destination DB (@dest_only)", table_name)
 
     use_incremental = (
         incremental_cfg is not None
@@ -168,7 +179,7 @@ def run_query_file(
             else "no @incremental config"
         )
         log.info("Running %s as full replace (%s)", table_name, reason)
-        return _run_full(query_file, sql, table_name, if_exists, dry_run, chunk_size)
+        return _run_full(query_file, sql, table_name, if_exists, dry_run, chunk_size, fetch_db=fetch_db)
 
 
 def _run_full(
@@ -178,13 +189,16 @@ def _run_full(
     if_exists: str,
     dry_run: bool,
     chunk_size: int,
+    fetch_db: dict = None,
 ) -> int:
+    if fetch_db is None:
+        fetch_db = SOURCE_DB
     log.info("Running query %s from %s", table_name, query_file)
     last_updated_at, _ = fetch_updated_at_stats(ANALYTICS_DB, table_name)
     total_rows = 0
     first_chunk = True
 
-    for chunk_number, df in enumerate(fetch_chunks(SOURCE_DB, sql, chunk_size=chunk_size), start=1):
+    for chunk_number, df in enumerate(fetch_chunks(fetch_db, sql, chunk_size=chunk_size), start=1):
         total_rows += len(df)
         log.info("Query %s chunk %d: %d rows, %d columns", table_name, chunk_number, len(df), len(df.columns))
 
