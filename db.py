@@ -310,6 +310,41 @@ def _create_table_sql(table: str, df: pd.DataFrame) -> str:
     return f"CREATE TABLE IF NOT EXISTS `{table}` ({col_defs})"
 
 
+def _write_with_conn(
+    conn,
+    df: pd.DataFrame,
+    table: str,
+    if_exists: str = "replace",
+    db_name: str = "",
+) -> None:
+    """Write a DataFrame using an already-open pymysql connection (no tunnel management)."""
+    if df.empty:
+        log.warning("write_table called with empty DataFrame — skipping %s", table)
+        return
+
+    df = df.astype(object).where(pd.notnull(df), other=None)
+
+    cols         = list(df.columns)
+    cols_sql     = ", ".join(f"`{c}`" for c in cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+    insert_sql   = f"INSERT INTO `{table}` ({cols_sql}) VALUES ({placeholders})"
+    rows         = [tuple(row) for row in df.itertuples(index=False, name=None)]
+
+    with conn.cursor() as cur:
+        if if_exists == "replace":
+            cur.execute(f"DROP TABLE IF EXISTS `{table}`")
+            cur.execute(_create_table_sql(table, df))
+            log.debug("Recreated table %s", table)
+
+        for i in range(0, len(rows), CHUNK_SIZE):
+            batch = rows[i : i + CHUNK_SIZE]
+            cur.executemany(insert_sql, batch)
+            log.debug("Inserted chunk %d–%d → %s", i, i + len(batch), table)
+
+    conn.commit()
+    log.info("write_table → %d rows written to %s.%s", len(rows), db_name, table)
+
+
 def write_table(
     cfg: Dict[str, Any],
     df: pd.DataFrame,
@@ -319,50 +354,12 @@ def write_table(
     """
     Write a DataFrame to a MySQL table through an SSH tunnel.
 
-    Args:
-        cfg:       Config dict with 'ssh' and 'db' sub-dicts.
-        df:        DataFrame to write. Column names must match the target table.
-        table:     Target table name.
-        if_exists: 'replace' → TRUNCATE then INSERT (keeps existing schema).
-                              If the table does not exist yet it is created
-                              automatically from the DataFrame dtypes.
-                   'append'  → INSERT only (table must already exist).
-
-    Rows are inserted in batches of CHUNK_SIZE (default 5000).
+    Opens its own tunnel and connection. For writing multiple chunks in a loop,
+    use _write_with_conn with a shared connection from _connect() instead to
+    avoid opening a new tunnel per chunk.
     """
-    if df.empty:
-        log.warning("write_table called with empty DataFrame — skipping %s", table)
-        return
-
-    # Replace NaN / NaT with None so pymysql sends NULL to MySQL.
-    # Must cast to object dtype first — float columns otherwise keep numpy nan
-    # which pymysql cannot serialise (raises "nan can not be used with MySQL").
-    df = df.astype(object).where(pd.notnull(df), other=None)
-
-    cols         = list(df.columns)
-    cols_sql     = ", ".join(f"`{c}`" for c in cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-    insert_sql   = f"INSERT INTO `{table}` ({cols_sql}) VALUES ({placeholders})"
-    rows         = [tuple(row) for row in df.itertuples(index=False, name=None)]
-
     with _connect(cfg) as conn:
-        with conn.cursor() as cur:
-            if if_exists == "replace":
-                # DROP + CREATE ensures the schema always matches the current DataFrame.
-                # TRUNCATE would keep the old schema and break when new columns are added.
-                cur.execute(f"DROP TABLE IF EXISTS `{table}`")
-                cur.execute(_create_table_sql(table, df))
-                log.debug("Recreated table %s", table)
-
-            for i in range(0, len(rows), CHUNK_SIZE):
-                batch = rows[i : i + CHUNK_SIZE]
-                cur.executemany(insert_sql, batch)
-                log.debug("Inserted chunk %d–%d → %s", i, i + len(batch), table)
-
-        conn.commit()
-
-    log.info("write_table → %d rows written to %s.%s",
-             len(df), cfg["db"]["database"], table)
+        _write_with_conn(conn, df, table, if_exists=if_exists, db_name=cfg["db"]["database"])
 
 
 def fetch_updated_at_stats(

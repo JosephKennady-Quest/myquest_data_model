@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB, _PIPELINE_DIR
-from db import delete_rows_by_ids, fetch_chunks, fetch_updated_ids, fetch_updated_at_stats, write_run_log, write_table
+from db import _connect, _write_with_conn, delete_rows_by_ids, fetch_chunks, fetch_updated_ids, fetch_updated_at_stats, write_run_log, write_table
 
 
 logging.basicConfig(
@@ -198,17 +198,20 @@ def _run_full(
     total_rows = 0
     first_chunk = True
 
-    for chunk_number, df in enumerate(fetch_chunks(fetch_db, sql, chunk_size=chunk_size), start=1):
-        total_rows += len(df)
-        log.info("Query %s chunk %d: %d rows, %d columns", table_name, chunk_number, len(df), len(df.columns))
+    # Open one persistent write connection for all chunks to avoid opening a new
+    # SSH tunnel per chunk, which causes the bastion to rate-limit and reset.
+    with _connect(ANALYTICS_DB) as write_conn:
+        for chunk_number, df in enumerate(fetch_chunks(fetch_db, sql, chunk_size=chunk_size), start=1):
+            total_rows += len(df)
+            log.info("Query %s chunk %d: %d rows, %d columns", table_name, chunk_number, len(df), len(df.columns))
 
-        if dry_run:
-            continue
+            if dry_run:
+                continue
 
-        write_mode = if_exists if first_chunk else "append"
-        write_table(ANALYTICS_DB, df, table_name, if_exists=write_mode)
-        log.info("Wrote chunk %d for %s (mode=%s)", chunk_number, table_name, write_mode)
-        first_chunk = False
+            write_mode = if_exists if first_chunk else "append"
+            _write_with_conn(write_conn, df, table_name, if_exists=write_mode, db_name=ANALYTICS_DB["db"]["database"])
+            log.info("Wrote chunk %d for %s (mode=%s)", chunk_number, table_name, write_mode)
+            first_chunk = False
 
     if total_rows == 0:
         log.warning("Query %s returned 0 rows; no destination write was performed.", table_name)
