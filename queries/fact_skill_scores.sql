@@ -13,7 +13,7 @@ SELECT
 	psu.skill_id, 
 	AVG(la.score) AS score,
 	la.created_at AS assessed_at,
-	1=1
+	psu.updated_at AS updated_at
 -- 	assessment_round
 FROM
 	quest_rearch_production.ple_skill_user psu

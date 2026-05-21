@@ -14,7 +14,7 @@ c.id AS course_id,
 l.id AS lesson_id,
 u.centre_id AS centre_id,
 -- date_id,
-SUM(la.duration) AS total_duration_secs
+SUM(la.duration) AS total_duration_secs,
 -- events_count,
 -- mode (online/offline)
 la.updated_at AS updated_at
@@ -33,3 +33,4 @@ AND l.status = 1
 AND l.deleted_at IS NULL 
 AND s.deleted_at IS NULL
 AND la.created_at >= '2026-05-01'
+AND la.user_id IN ('0002b451-65cc-44c8-886e-b5546ec553ec')

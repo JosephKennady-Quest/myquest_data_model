@@ -140,6 +140,14 @@ def run_query_file(
     table_name = query_file.stem
     sql = query_file.read_text(encoding="utf-8")
 
+    # Skip stub files that contain only comments or whitespace
+    executable_sql = "\n".join(
+        line for line in sql.splitlines() if not line.strip().startswith("--")
+    ).strip()
+    if not executable_sql:
+        log.info("Skipping %s — file contains no executable SQL", table_name)
+        return 0
+
     incremental_cfg = _parse_incremental_config(sql)
     last_run_at = _get_last_run(table_name)
 
@@ -233,7 +241,7 @@ def _run_incremental(
     # Wrap original query and filter to only the changed IDs
     placeholders = ", ".join(["%s"] * len(updated_ids))
     incremental_sql = (
-        f"SELECT * FROM ({sql}) AS _incremental_q "
+        f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _incremental_q "
         f"WHERE `{dest_id_col}` IN ({placeholders})"
     )
 

@@ -2,6 +2,7 @@ import logging
 import select
 import socket
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional, Tuple
 
@@ -54,15 +55,24 @@ def _tunnel(ssh: Dict[str, Any]):
     Yields an object with a local_bind_port attribute so callers can connect
     pymysql to 127.0.0.1:<local_bind_port>.
     """
-    # ── 1. Connect to bastion ─────────────────────────────────────────────────
+    # ── 1. Connect to bastion (retry on transient reset) ──────────────────────
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        hostname=ssh["host"],
-        port=ssh["port"],
-        username=ssh["username"],
-        key_filename=ssh["pkey_path"],
-    )
+    for _attempt in range(1, 5):
+        try:
+            client.connect(
+                hostname=ssh["host"],
+                port=ssh["port"],
+                username=ssh["username"],
+                key_filename=ssh["pkey_path"],
+            )
+            break
+        except (paramiko.ssh_exception.SSHException, ConnectionResetError, OSError) as exc:
+            if _attempt == 4:
+                raise
+            wait = 2 ** _attempt  # 2, 4, 8 seconds
+            log.warning("SSH connect attempt %d failed (%s) — retrying in %ds", _attempt, exc, wait)
+            time.sleep(wait)
     log.debug("SSH connected → %s@%s", ssh["username"], ssh["host"])
 
     transport = client.get_transport()

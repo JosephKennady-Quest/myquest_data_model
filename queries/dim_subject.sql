@@ -7,40 +7,42 @@
 -- Docs     : docs/dim_subject.md
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- MySQL does not support DISTINCT inside JSON_ARRAYAGG.
+-- Deduplication is done in the inner subquery; the outer query aggregates the unique values.
 SELECT
     s.id AS subject_id,
     s.name AS subject_name,
     s.tag AS identity_tag,
-
-    JSON_ARRAYAGG(DISTINCT p.program_id) AS program_ids,
-    JSON_ARRAYAGG(DISTINCT st.trade_id) AS trade_ids,
-    JSON_ARRAYAGG(DISTINCT p.id) AS project_ids,
-
-    s.active AS active,
-	s.updated_at AS updated_at
+    agg.program_ids,
+    agg.trade_ids,
+    agg.project_ids,
+    s.status AS active,
+    s.updated_at AS updated_at
 FROM quest_rearch_production.subjects s
-
-JOIN quest_rearch_production.subject_trade st 
-    ON st.subject_id = s.id
-
-JOIN quest_rearch_production.phase_subject ps 
-    ON ps.subject_id = s.id
-
-JOIN quest_rearch_production.centre_subject cs 
-    ON cs.subject_id = s.id
-
-JOIN quest_rearch_production.centre_project cp 
-    ON cp.centre_id = cs.centre_id 
-
-JOIN quest_rearch_production.projects p 
-    ON p.id = cp.project_id 
-
-JOIN quest_rearch_production.centre_trade ct 
-    ON ct.centre_id = cs.centre_id
-    AND st.trade_id = ct.trade_id
-
-GROUP BY
-    s.id,
-    s.name,
-    s.tag,
-    s.active;
+JOIN (
+    SELECT
+        base.subject_id,
+        JSON_ARRAYAGG(base.program_id) AS program_ids,
+        JSON_ARRAYAGG(base.trade_id)   AS trade_ids,
+        JSON_ARRAYAGG(base.project_id) AS project_ids
+    FROM (
+        SELECT DISTINCT
+            cs.subject_id,
+            p.program_id,
+            st.trade_id,
+            p.id AS project_id
+        FROM quest_rearch_production.subject_trade st
+        JOIN quest_rearch_production.centre_subject cs
+            ON cs.subject_id = st.subject_id
+        JOIN quest_rearch_production.phase_subject ps
+            ON ps.subject_id = cs.subject_id
+        JOIN quest_rearch_production.centre_project cp
+            ON cp.centre_id = cs.centre_id
+        JOIN quest_rearch_production.projects p
+            ON p.id = cp.project_id
+        JOIN quest_rearch_production.centre_trade ct
+            ON ct.centre_id = cs.centre_id
+           AND st.trade_id = ct.trade_id
+    ) base
+    GROUP BY base.subject_id
+) agg ON agg.subject_id = s.id
