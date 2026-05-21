@@ -10,7 +10,7 @@ One row per learner-lesson combination (`user_id`, `lesson_id`). No aggregation 
 
 ## Incremental Configuration
 
-This query uses `-- @dest_only` and reads from the analytics destination database (`quest_ple_analytics`), not the production source. Incremental mode is not configured. The pipeline runs a full replace on each execution.
+This query uses `-- @dest_only` and reads from the analytics destination database (`myquest_data_model`), not the production source. Incremental mode is not configured. The pipeline runs a full replace on each execution.
 
 ## Global Filters
 
@@ -55,6 +55,6 @@ No joins. The query selects directly from the pre-aggregated `main_learning_acti
 | --- | --- |
 | Intended DWH table | `fact_lesson_progress` |
 | DWH grain risk | Grain depends on the upstream `main_learning_activity_myquest_ael_lesson` table. If that table contains duplicate `(user_id, lesson_id)` rows, this fact table will also contain duplicates. |
-| Source schema | `quest_ple_analytics` (destination / analytics DB) |
+| Source schema | `myquest_data_model` (destination / analytics DB) |
 | DWH source status | Reads from a pre-aggregated analytics table, not directly from the production source. The `@dest_only` flag is set — the pipeline connects to the destination DB for this query. |
 | Output DWH columns | `user_id`, `centre_id`, `batch_id`, `subject_id`, `lesson_id`, `completed`, `time_spent_secs` |

@@ -1,6 +1,6 @@
 # MyQuest Data Model
 
-SQL query pipeline that reads from the production MySQL source (`quest_rearch_production`) through an SSH tunnel and writes dimension/fact tables into the analytics destination database (`quest_ple_analytics`).
+SQL query pipeline that reads from the production MySQL source (`quest_rearch_production`) through an SSH tunnel and writes dimension/fact tables into the analytics destination database (`myquest_data_model`).
 
 ---
 

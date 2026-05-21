@@ -36,7 +36,7 @@ CONFIG = {
         "db": {
             "user":     os.getenv("DEST_DB_USER"),
             "password": os.getenv("DEST_DB_PASSWORD"),
-            "database": os.getenv("DEST_DB_NAME", "quest_ple_analytics"),
+            "database": os.getenv("DEST_DB_NAME", "myquest_data_model"),
         },
     },
 }

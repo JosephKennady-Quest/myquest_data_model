@@ -10,7 +10,7 @@ One row per learner-subject combination (`user_id`, `subject_id`). The `GROUP BY
 
 ## Incremental Configuration
 
-This query uses `-- @dest_only` and reads from the analytics destination database (`quest_ple_analytics`), not the production source. Incremental mode is not configured. The pipeline runs a full replace on each execution.
+This query uses `-- @dest_only` and reads from the analytics destination database (`myquest_data_model`), not the production source. Incremental mode is not configured. The pipeline runs a full replace on each execution.
 
 ## Global Filters
 
@@ -56,6 +56,6 @@ No joins. The query selects and groups directly from the pre-aggregated `main_le
 | --- | --- |
 | Intended DWH table | `fact_subject_progress` |
 | DWH grain risk | If the source table `main_learning_activity_myquest_ael` has multiple rows per `(user_id, subject_id)` pair (e.g. different `centre_id` or `batch_id` values), the `GROUP BY user_id, subject_id` will silently collapse them, taking an arbitrary value for `centre_id`, `batch_id`, `subj_total_completed`, and `subj_total_allocated`. Consider extending the `GROUP BY` to include `centre_id` and `batch_id` if multiple rows per learner-subject are expected. |
-| Source schema | `quest_ple_analytics` (destination / analytics DB) |
+| Source schema | `myquest_data_model` (destination / analytics DB) |
 | DWH source status | Reads from a pre-aggregated analytics table, not directly from the production source. The `@dest_only` flag is set — the pipeline connects to the destination DB for this query. |
 | Output DWH columns | `user_id`, `centre_id`, `batch_id`, `subject_id`, `subj_total_completed`, `subj_total_allocated`, `progress_pct` |
