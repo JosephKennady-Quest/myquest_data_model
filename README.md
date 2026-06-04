@@ -114,10 +114,14 @@ State is stored per-table in `.pipeline_state.json` (auto-created, git-ignored).
 | `dim_learner` | `quest_rearch_production.users` | `id` | `learner_id` | `updated_at` |
 | `dim_phase` | `quest_rearch_production.phases` | `id` | `phase_id` | `updated_at` |
 | `dim_program` | `quest_rearch_production.programs` | `id` | `program_id` | `updated_at` |
+| `dim_project` | `quest_rearch_production.projects` | `id` | `project_id` | `updated_at` |
 | `dim_subject` | `quest_rearch_production.subjects` | `id` | `subject_id` | `updated_at` |
+| `fact_centre_visit` | `quest_rearch_production.mqops_centre_visits` | `id` | `centre_visit_id` | `updated_at` |
 | `fact_learning_event` | `quest_rearch_production.learning_activities` | `id` | `learning_activity_id` | `updated_at` |
 | `fact_ple_response` | `quest_rearch_production.ple_assessment_responses` | `id` | `response_id` | `updated_at` |
+| `fact_session` | `quest_rearch_production.mqops_session_trackers` | `id` | `id` | `created_at` |
 | `fact_skill_scores` | `quest_rearch_production.ple_skill_user` | `id` | `score_id` | `updated_at` |
+| `fact_tot_session` | `quest_rearch_production.mqops_tot_summary` | `id` | `tot_summary_id` | `updated_at` |
 
 ---
 
@@ -191,17 +195,21 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | `dim_learner` | One row per learner | [queries/dim_learner.sql](queries/dim_learner.sql) | [docs/dim_learner_query_columns.md](docs/dim_learner_query_columns.md) |
 | `dim_phase` | One row per phase | [queries/dim_phase.sql](queries/dim_phase.sql) | [docs/dim_phase.md](docs/dim_phase.md) |
 | `dim_program` | One row per program | [queries/dim_program.sql](queries/dim_program.sql) | [docs/dim_program.md](docs/dim_program.md) |
+| `dim_project` | One row per project | [queries/dim_project.sql](queries/dim_project.sql) | [docs/dim_project.md](docs/dim_project.md) |
 | `dim_subject` | One row per subject | [queries/dim_subject.sql](queries/dim_subject.sql) | [docs/dim_subject.md](docs/dim_subject.md) |
 
 ### Facts
 
 | Model | Grain | Query | Documentation |
 | --- | --- | --- | --- |
+| `fact_centre_visit` | One row per centre visit-centre-related user combination | [queries/fact_centre_visit.sql](queries/fact_centre_visit.sql) | [docs/fact_centre_visit.md](docs/fact_centre_visit.md) |
 | `fact_learning_event` | One row per completed learning activity | [queries/fact_learning_event.sql](queries/fact_learning_event.sql) | [docs/fact_learning_event.md](docs/fact_learning_event.md) |
 | `fact_lesson_progress` | One row per learner-lesson combination | [queries/fact_lesson_progress.sql](queries/fact_lesson_progress.sql) | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
 | `fact_ple_response` | One row per PLE assessment response | [queries/fact_ple_response.sql](queries/fact_ple_response.sql) | [docs/fact_ple_response.md](docs/fact_ple_response.md) |
+| `fact_session` | One row per session tracker record | [queries/fact_session.sql](queries/fact_session.sql) | [docs/fact_session.md](docs/fact_session.md) |
 | `fact_skill_scores` | One row per skill-user score | [queries/fact_skill_scores.sql](queries/fact_skill_scores.sql) | [docs/fact_skill_scores.md](docs/fact_skill_scores.md) |
 | `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
+| `fact_tot_session` | One row per ToT summary-centre/stakeholder row | [queries/fact_tot_session.sql](queries/fact_tot_session.sql) | [docs/fact_tot_session.md](docs/fact_tot_session.md) |
 
 ### Draft / In Progress
 
