@@ -121,6 +121,7 @@ State is stored per-table in `.pipeline_state.json` (auto-created, git-ignored).
 | `fact_ple_response` | `quest_rearch_production.ple_assessment_responses` | `id` | `response_id` | `updated_at` |
 | `fact_session` | `quest_rearch_production.mqops_session_trackers` | `id` | `id` | `created_at` |
 | `fact_skill_scores` | `quest_rearch_production.ple_skill_user` | `id` | `score_id` | `updated_at` |
+| `fact_placement` | `quest_rearch_production.placements` | `id` | `placement_id` | `updated_at` |
 | `fact_tot_session` | `quest_rearch_production.mqops_tot_summary` | `id` | `tot_summary_id` | `updated_at` |
 
 ---
@@ -209,6 +210,7 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | `fact_session` | One row per session tracker record | [queries/fact_session.sql](queries/fact_session.sql) | [docs/fact_session.md](docs/fact_session.md) |
 | `fact_skill_scores` | One row per skill-user score | [queries/fact_skill_scores.sql](queries/fact_skill_scores.sql) | [docs/fact_skill_scores.md](docs/fact_skill_scores.md) |
 | `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
+| `fact_placement` | One row per learner per placement type (3 types via UNION ALL) | [queries/fact_placement.sql](queries/fact_placement.sql) | [docs/fact_placement.md](docs/fact_placement.md) |
 | `fact_tot_session` | One row per ToT summary-centre/stakeholder row | [queries/fact_tot_session.sql](queries/fact_tot_session.sql) | [docs/fact_tot_session.md](docs/fact_tot_session.md) |
 
 ### Draft / In Progress
