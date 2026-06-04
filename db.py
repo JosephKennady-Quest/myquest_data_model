@@ -279,6 +279,22 @@ def delete_rows_by_ids(
     log.debug("delete_rows_by_ids → removed %d ids from %s", len(ids), table)
 
 
+def _delete_rows_by_ids_conn(conn, table: str, id_col: str, ids: list) -> None:
+    """delete_rows_by_ids using an already-open connection."""
+    if not ids:
+        return
+    ph = ", ".join(["%s"] * len(ids))
+    with conn.cursor() as cur:
+        try:
+            cur.execute(f"DELETE FROM `{table}` WHERE `{id_col}` IN ({ph})", tuple(ids))
+        except pymysql.err.ProgrammingError as exc:
+            if exc.args[0] == 1146:
+                return
+            raise
+    conn.commit()
+    log.debug("delete_rows_by_ids → removed %d ids from %s", len(ids), table)
+
+
 
 _DTYPE_TO_MYSQL = {
     "object":         "TEXT",
@@ -362,32 +378,41 @@ def write_table(
         _write_with_conn(conn, df, table, if_exists=if_exists, db_name=cfg["db"]["database"])
 
 
+def _fetch_updated_at_stats_conn(
+    conn,
+    table: str,
+    updated_at_col: str = "updated_at",
+) -> Tuple[Optional[str], Optional[str]]:
+    """fetch_updated_at_stats using an already-open connection."""
+    sql = f"SELECT MIN(`{updated_at_col}`), MAX(`{updated_at_col}`) FROM `{table}`"
+    with conn.cursor() as cur:
+        try:
+            cur.execute(sql)
+            row = cur.fetchone()
+            if row:
+                return (
+                    str(row[0]) if row[0] is not None else None,
+                    str(row[1]) if row[1] is not None else None,
+                )
+        except pymysql.err.ProgrammingError as exc:
+            if exc.args[0] in (1146, 1054):
+                return None, None
+            raise
+        except pymysql.err.OperationalError as exc:
+            if exc.args[0] == 1054:
+                return None, None
+            raise
+    return None, None
+
+
 def fetch_updated_at_stats(
     cfg: Dict[str, Any],
     table: str,
     updated_at_col: str = "updated_at",
 ) -> Tuple[Optional[str], Optional[str]]:
     """Return (min_updated_at, max_updated_at) from a destination table, or (None, None) if missing."""
-    sql = f"SELECT MIN(`{updated_at_col}`), MAX(`{updated_at_col}`) FROM `{table}`"
     with _connect(cfg) as conn:
-        with conn.cursor() as cur:
-            try:
-                cur.execute(sql)
-                row = cur.fetchone()
-                if row:
-                    return (
-                        str(row[0]) if row[0] is not None else None,
-                        str(row[1]) if row[1] is not None else None,
-                    )
-            except pymysql.err.ProgrammingError as exc:
-                if exc.args[0] in (1146, 1054):  # table doesn't exist / column doesn't exist
-                    return None, None
-                raise
-            except pymysql.err.OperationalError as exc:
-                if exc.args[0] == 1054:  # Unknown column
-                    return None, None
-                raise
-    return None, None
+        return _fetch_updated_at_stats_conn(conn, table, updated_at_col)
 
 
 _CREATE_RUN_LOG = """
@@ -404,6 +429,28 @@ CREATE TABLE IF NOT EXISTS `pipeline_run_log` (
 """
 
 
+def _write_run_log_conn(
+    conn,
+    table_name: str,
+    mode: str,
+    rows_written: int,
+    dry_run: bool,
+    last_updated_at: Optional[str],
+    latest_updated_at: Optional[str],
+) -> None:
+    """write_run_log using an already-open connection."""
+    with conn.cursor() as cur:
+        cur.execute(_CREATE_RUN_LOG)
+        cur.execute(
+            """INSERT INTO `pipeline_run_log`
+               (run_at, table_name, mode, rows_written, dry_run, last_updated_at, latest_updated_at)
+               VALUES (NOW(), %s, %s, %s, %s, %s, %s)""",
+            (table_name, mode, rows_written, int(dry_run), last_updated_at, latest_updated_at),
+        )
+    conn.commit()
+    log.debug("write_run_log → logged %s mode=%s rows=%d", table_name, mode, rows_written)
+
+
 def write_run_log(
     cfg: Dict[str, Any],
     table_name: str,
@@ -415,13 +462,4 @@ def write_run_log(
 ) -> None:
     """Insert one row into pipeline_run_log."""
     with _connect(cfg) as conn:
-        with conn.cursor() as cur:
-            cur.execute(_CREATE_RUN_LOG)
-            cur.execute(
-                """INSERT INTO `pipeline_run_log`
-                   (run_at, table_name, mode, rows_written, dry_run, last_updated_at, latest_updated_at)
-                   VALUES (NOW(), %s, %s, %s, %s, %s, %s)""",
-                (table_name, mode, rows_written, int(dry_run), last_updated_at, latest_updated_at),
-            )
-        conn.commit()
-    log.debug("write_run_log → logged %s mode=%s rows=%d", table_name, mode, rows_written)
+        _write_run_log_conn(conn, table_name, mode, rows_written, dry_run, last_updated_at, latest_updated_at)

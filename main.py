@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Optional
 
 from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB, _PIPELINE_DIR
-from db import _connect, _write_with_conn, delete_rows_by_ids, fetch_chunks, fetch_updated_ids, fetch_updated_at_stats, write_run_log, write_table
+from db import (
+    _connect, _write_with_conn, _delete_rows_by_ids_conn,
+    _fetch_updated_at_stats_conn, _write_run_log_conn,
+    delete_rows_by_ids, fetch_chunks, fetch_updated_ids,
+    fetch_updated_at_stats, write_run_log, write_table,
+)
 
 
 logging.basicConfig(
@@ -194,13 +199,15 @@ def _run_full(
     if fetch_db is None:
         fetch_db = SOURCE_DB
     log.info("Running query %s from %s", table_name, query_file)
-    last_updated_at, _ = fetch_updated_at_stats(ANALYTICS_DB, table_name)
     total_rows = 0
     first_chunk = True
+    db_name = ANALYTICS_DB["db"]["database"]
 
-    # Open one persistent write connection for all chunks to avoid opening a new
-    # SSH tunnel per chunk, which causes the bastion to rate-limit and reset.
-    with _connect(ANALYTICS_DB) as write_conn:
+    # One persistent destination connection for the entire run — avoids opening a
+    # new SSH tunnel per chunk/helper call, which triggers bastion rate-limiting.
+    with _connect(ANALYTICS_DB) as dest_conn:
+        last_updated_at, _ = _fetch_updated_at_stats_conn(dest_conn, table_name)
+
         for chunk_number, df in enumerate(fetch_chunks(fetch_db, sql, chunk_size=chunk_size), start=1):
             total_rows += len(df)
             log.info("Query %s chunk %d: %d rows, %d columns", table_name, chunk_number, len(df), len(df.columns))
@@ -209,18 +216,18 @@ def _run_full(
                 continue
 
             write_mode = if_exists if first_chunk else "append"
-            _write_with_conn(write_conn, df, table_name, if_exists=write_mode, db_name=ANALYTICS_DB["db"]["database"])
+            _write_with_conn(dest_conn, df, table_name, if_exists=write_mode, db_name=db_name)
             log.info("Wrote chunk %d for %s (mode=%s)", chunk_number, table_name, write_mode)
             first_chunk = False
 
-    if total_rows == 0:
-        log.warning("Query %s returned 0 rows; no destination write was performed.", table_name)
-    elif dry_run:
-        log.info("Dry run enabled; skipped writing %d rows for %s", total_rows, table_name)
-    else:
-        _record_run(table_name)
-        _, latest_updated_at = fetch_updated_at_stats(ANALYTICS_DB, table_name)
-        write_run_log(ANALYTICS_DB, table_name, "full", total_rows, dry_run, last_updated_at, latest_updated_at)
+        if total_rows == 0:
+            log.warning("Query %s returned 0 rows; no destination write was performed.", table_name)
+        elif dry_run:
+            log.info("Dry run enabled; skipped writing %d rows for %s", total_rows, table_name)
+        else:
+            _record_run(table_name)
+            _, latest_updated_at = _fetch_updated_at_stats_conn(dest_conn, table_name)
+            _write_run_log_conn(dest_conn, table_name, "full", total_rows, dry_run, last_updated_at, latest_updated_at)
 
     log.info("Query %s complete; total rows: %d", table_name, total_rows)
     return total_rows
@@ -244,58 +251,60 @@ def _run_incremental(
         "Incremental run for %s — scanning %s.%s > '%s'",
         table_name, source_table, updated_at_col, last_run_at,
     )
-    last_updated_at, _ = fetch_updated_at_stats(ANALYTICS_DB, table_name)
+    db_name = ANALYTICS_DB["db"]["database"]
 
-    updated_ids = fetch_updated_ids(SOURCE_DB, source_table, id_col, updated_at_col, last_run_at)
+    # One persistent destination connection for the entire incremental run.
+    with _connect(ANALYTICS_DB) as dest_conn:
+        last_updated_at, _ = _fetch_updated_at_stats_conn(dest_conn, table_name)
 
-    if not updated_ids:
-        log.info("No updated records since %s — skipping %s", last_run_at, table_name)
-        write_run_log(ANALYTICS_DB, table_name, "incremental", 0, dry_run, last_updated_at, last_updated_at)
-        return 0
+        updated_ids = fetch_updated_ids(SOURCE_DB, source_table, id_col, updated_at_col, last_run_at)
 
-    log.info("%d updated id(s) found for %s", len(updated_ids), table_name)
+        if not updated_ids:
+            log.info("No updated records since %s — skipping %s", last_run_at, table_name)
+            _write_run_log_conn(dest_conn, table_name, "incremental", 0, dry_run, last_updated_at, last_updated_at)
+            return 0
 
-    # Wrap original query and filter to only the changed IDs
-    placeholders = ", ".join(["%s"] * len(updated_ids))
-    incremental_sql = (
-        f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _incremental_q "
-        f"WHERE `{dest_id_col}` IN ({placeholders})"
-    )
+        log.info("%d updated id(s) found for %s", len(updated_ids), table_name)
 
-    total_rows = 0
-    first_chunk = True
+        placeholders = ", ".join(["%s"] * len(updated_ids))
+        incremental_sql = (
+            f"SELECT * FROM ({sql.rstrip().rstrip(';')}) AS _incremental_q "
+            f"WHERE `{dest_id_col}` IN ({placeholders})"
+        )
 
-    # Dry run: just count without touching destination
-    if dry_run:
+        total_rows = 0
+
+        # Dry run: just count without touching destination
+        if dry_run:
+            for chunk_number, df in enumerate(
+                fetch_chunks(SOURCE_DB, incremental_sql, params=tuple(updated_ids), chunk_size=chunk_size),
+                start=1,
+            ):
+                total_rows += len(df)
+                log.info("Dry run chunk %d for %s: %d rows", chunk_number, table_name, len(df))
+            log.info("Dry run: would have written %d rows for %s", total_rows, table_name)
+            return total_rows
+
+        # Delete stale rows then re-insert fresh data
+        _delete_rows_by_ids_conn(dest_conn, table_name, dest_id_col, updated_ids)
+        log.info("Deleted stale rows for %d id(s) from %s", len(updated_ids), table_name)
+
         for chunk_number, df in enumerate(
             fetch_chunks(SOURCE_DB, incremental_sql, params=tuple(updated_ids), chunk_size=chunk_size),
             start=1,
         ):
             total_rows += len(df)
-            log.info("Dry run chunk %d for %s: %d rows", chunk_number, table_name, len(df))
-        log.info("Dry run: would have written %d rows for %s", total_rows, table_name)
-        return total_rows
+            _write_with_conn(dest_conn, df, table_name, if_exists="append", db_name=db_name)
+            log.info("Wrote incremental chunk %d for %s: %d rows", chunk_number, table_name, len(df))
 
-    # Delete stale rows then re-insert fresh data
-    delete_rows_by_ids(ANALYTICS_DB, table_name, dest_id_col, updated_ids)
-    log.info("Deleted stale rows for %d id(s) from %s", len(updated_ids), table_name)
+        if total_rows == 0:
+            log.warning("Incremental query %s returned 0 rows for the updated ids.", table_name)
+        else:
+            _record_run(table_name)
 
-    for chunk_number, df in enumerate(
-        fetch_chunks(SOURCE_DB, incremental_sql, params=tuple(updated_ids), chunk_size=chunk_size),
-        start=1,
-    ):
-        total_rows += len(df)
-        write_table(ANALYTICS_DB, df, table_name, if_exists="append")
-        log.info("Wrote incremental chunk %d for %s: %d rows", chunk_number, table_name, len(df))
-        first_chunk = False
+        _, latest_updated_at = _fetch_updated_at_stats_conn(dest_conn, table_name)
+        _write_run_log_conn(dest_conn, table_name, "incremental", total_rows, dry_run, last_updated_at, latest_updated_at)
 
-    if total_rows == 0:
-        log.warning("Incremental query %s returned 0 rows for the updated ids.", table_name)
-    else:
-        _record_run(table_name)
-
-    _, latest_updated_at = fetch_updated_at_stats(ANALYTICS_DB, table_name)
-    write_run_log(ANALYTICS_DB, table_name, "incremental", total_rows, dry_run, last_updated_at, latest_updated_at)
     log.info("Incremental run for %s complete; rows written: %d", table_name, total_rows)
     return total_rows
 
