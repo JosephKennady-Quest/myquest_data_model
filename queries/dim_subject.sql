@@ -3,7 +3,7 @@
 -- Table    : dim_subject
 -- Grain    : one row per subject (multi-path fan-out collapsed by GROUP BY + JSON_ARRAYAGG)
 -- Mode     : incremental
--- Source   : quest_rearch_production.subjects, quest_rearch_production.subject_trade, quest_rearch_production.phase_subject, quest_rearch_production.centre_subject, quest_rearch_production.centre_project, quest_rearch_production.projects, quest_rearch_production.centre_trade
+-- Source   : quest_rearch_production.subjects, quest_rearch_production.subject_trade, quest_rearch_production.phase_subject, quest_rearch_production.centre_subject, quest_rearch_production.centre_project, quest_rearch_production.projects, quest_rearch_production.centre_trade, quest_rearch_production.lessons
 -- Docs     : docs/dim_subject.md
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,7 @@ SELECT
     agg.program_ids,
     agg.trade_ids,
     agg.project_ids,
+    lagg.lesson_ids,
     s.status AS active,
     s.updated_at AS updated_at
 FROM quest_rearch_production.subjects s
@@ -46,3 +47,18 @@ JOIN (
     ) base
     GROUP BY base.subject_id
 ) agg ON agg.subject_id = s.id
+LEFT JOIN (
+    SELECT
+        l.subject_id,
+        JSON_ARRAYAGG(JSON_OBJECT('id', l.lesson_id, 'name', l.lesson_name)) AS lesson_ids
+    FROM (
+        SELECT DISTINCT
+            id   AS lesson_id,
+            name AS lesson_name,
+            subject_id
+        FROM quest_rearch_production.lessons
+        WHERE status = 1
+          AND deleted_at IS NULL
+    ) l
+    GROUP BY l.subject_id
+) lagg ON lagg.subject_id = s.id

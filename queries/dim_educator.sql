@@ -11,6 +11,7 @@
 
 SELECT
     u.id AS educator_id,
+    u.created_at AS registration_date,
     fd.designation AS designation,
     fd.experience AS experience_yrs,
     fd.qualification AS qualification,
@@ -19,16 +20,26 @@ SELECT
     u.is_master_trainer AS mastercoach_flag,
     u.centre_id,
     p.id AS program_id,
+    s.name AS user_state,
+    c.name AS centre,
+    ct.name As centre_type,
+    u.is_super_facilitator,
     u.updated_at
 FROM quest_rearch_production.users AS u
 JOIN quest_rearch_production.facilitator_details AS fd
     ON fd.user_id = u.id
+JOIN quest_rearch_production.centres AS c 
+	ON c.id = u.centre_id 
 JOIN quest_rearch_production.centre_project AS cp
     ON cp.centre_id = u.centre_id
 JOIN quest_rearch_production.projects AS p2
     ON p2.id = cp.project_id
 JOIN quest_rearch_production.programs AS p
     ON p.id = p2.program_id
+JOIN quest_rearch_production.states AS s
+    ON s.id = u.state
+JOIN quest_rearch_production.centre_types ct
+	ON ct.id = c.centre_type_id 
 WHERE
     1 = 1
     AND u.status = 1

@@ -1,17 +1,17 @@
--- ─────────────────────────────────────────────────────────────────────────────
--- Table    : fact_lesson_progress
--- Grain    : intended one row per progress_id (learner-lesson combination) — STUB, no SQL yet
--- Mode     : full
--- Source   : TBD
--- Docs     : docs/fact_lesson_progress.md
--- ─────────────────────────────────────────────────────────────────────────────
+-- -- ─────────────────────────────────────────────────────────────────────────────
+-- -- Table    : fact_lesson_progress
+-- -- Grain    : intended one row per progress_id (learner-lesson combination) — STUB, no SQL yet
+-- -- Mode     : full
+-- -- Source   : TBD
+-- -- Docs     : docs/fact_lesson_progress.md
+-- -- ─────────────────────────────────────────────────────────────────────────────
 
-progress_id,
-user_id,
-lesson_id,
-course_id,
-subject_id,
-time_spent_secs,
-completed_flag,
-attempts,
-completed_at
+-- progress_id,
+-- user_id,
+-- lesson_id,
+-- course_id,
+-- subject_id,
+-- time_spent_secs,
+-- completed_flag,
+-- attempts,
+-- completed_at
