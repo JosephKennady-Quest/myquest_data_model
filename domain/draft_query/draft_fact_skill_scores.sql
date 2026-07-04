@@ -28,18 +28,17 @@ LEFT JOIN
 LEFT JOIN quest_rearch_production.users u ON u.id = psu.user_id
 	AND u.deleted_at IS NULL
 	AND u.status = 1
-LEFT JOIN quest_rearch_production.states st ON st.id = u.state_id
+LEFT JOIN quest_rearch_production.states st ON st.id = u.state
 LEFT JOIN quest_rearch_production.centres c ON c.id = u.centre_id
 	AND c.deleted_at IS NULL
 	AND c.status = 1
 LEFT JOIN quest_rearch_production.centre_types ct ON ct.id = c.centre_type_id
 LEFT JOIN quest_rearch_production.ple_skills ps ON ps.id = psu.skill_id
 	AND ps.deleted_at IS NULL
-	AND ps.status = 1
 WHERE 1=1
 AND psu.deleted_at IS NULL
 AND la.completed = 1
-AND la.user_id IN ('0000ea31-8320-4974-b389-af6a2d725d44')
-AND psu.user_id IN ('0000ea31-8320-4974-b389-af6a2d725d44')
+-- AND la.user_id IN ('0000ea31-8320-4974-b389-af6a2d725d44')
+-- AND psu.user_id IN ('0000ea31-8320-4974-b389-af6a2d725d44')
 GROUP BY psu.user_id
 

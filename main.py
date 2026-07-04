@@ -2,9 +2,12 @@ import argparse
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+import pymysql
 
 from config import ANALYTICS_DB, QUERIES_DIR, QUERY_FETCH_CHUNK_SIZE, SOURCE_DB, _PIPELINE_DIR
 from db import (
@@ -13,6 +16,38 @@ from db import (
     delete_rows_by_ids, fetch_chunks, fetch_updated_ids,
     fetch_updated_at_stats, write_run_log, write_table,
 )
+
+# MySQL client error codes for a dropped/reset connection (bastion tunnel blips,
+# RDS idle-connection resets) — safe to retry since each retry restarts the
+# query from scratch rather than resuming a stream.
+_TRANSIENT_MYSQL_ERRNOS = {2003, 2006, 2013, 4031}
+_MAX_TRANSIENT_RETRIES = 3
+
+
+def _is_transient_db_error(exc: BaseException) -> bool:
+    if isinstance(exc, pymysql.err.OperationalError) and exc.args and exc.args[0] in _TRANSIENT_MYSQL_ERRNOS:
+        return True
+    return isinstance(exc, (ConnectionResetError, BrokenPipeError, TimeoutError))
+
+
+def _with_transient_retry(fn, *, table_name: str):
+    """Run fn() with retry-and-backoff on transient connection drops.
+
+    Only safe to use where a retry re-executes the query from scratch rather
+    than resuming a partially-consumed stream (see call sites).
+    """
+    for attempt in range(1, _MAX_TRANSIENT_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if attempt == _MAX_TRANSIENT_RETRIES or not _is_transient_db_error(exc):
+                raise
+            wait = 2 ** attempt
+            log.warning(
+                "Transient connection error on %s (attempt %d/%d): %s — retrying in %ds",
+                table_name, attempt, _MAX_TRANSIENT_RETRIES, exc, wait,
+            )
+            time.sleep(wait)
 
 
 logging.basicConfig(
@@ -196,6 +231,25 @@ def _run_full(
     chunk_size: int,
     fetch_db: dict = None,
 ) -> int:
+    run_once = lambda: _run_full_once(query_file, sql, table_name, if_exists, dry_run, chunk_size, fetch_db=fetch_db)
+
+    # Retrying re-executes the query from scratch and rewrites chunk 1 with
+    # if_exists, so it's only safe to auto-retry when that first write replaces
+    # the table outright rather than appending onto a possibly-partial attempt.
+    if if_exists != "replace":
+        return run_once()
+    return _with_transient_retry(run_once, table_name=table_name)
+
+
+def _run_full_once(
+    query_file: Path,
+    sql: str,
+    table_name: str,
+    if_exists: str,
+    dry_run: bool,
+    chunk_size: int,
+    fetch_db: dict = None,
+) -> int:
     if fetch_db is None:
         fetch_db = SOURCE_DB
     log.info("Running query %s from %s", table_name, query_file)
@@ -234,6 +288,21 @@ def _run_full(
 
 
 def _run_incremental(
+    query_file: Path,
+    sql: str,
+    table_name: str,
+    cfg: dict,
+    last_run_at: str,
+    dry_run: bool,
+    chunk_size: int,
+) -> int:
+    # Safe to retry wholesale: each attempt deletes-then-reinserts the same
+    # updated ids, so a retry after a partial write is idempotent.
+    run_once = lambda: _run_incremental_once(query_file, sql, table_name, cfg, last_run_at, dry_run, chunk_size)
+    return _with_transient_retry(run_once, table_name=table_name)
+
+
+def _run_incremental_once(
     query_file: Path,
     sql: str,
     table_name: str,

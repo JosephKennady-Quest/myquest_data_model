@@ -27,4 +27,4 @@ JOIN quest_rearch_production.ple_assessments pa
 	pa.id = par.assessment_id
 WHERE
 		1=1
-	AND par.user_id IN ('0002b451-65cc-44c8-886e-b5546ec553ec');
+	-- AND par.user_id IN ('0002b451-65cc-44c8-886e-b5546ec553ec');

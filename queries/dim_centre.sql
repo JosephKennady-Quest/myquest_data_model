@@ -3,7 +3,7 @@
 -- Table    : dim_centre
 -- Grain    : one row per centre (trade_ids aggregated as JSON array)
 -- Mode     : incremental
--- Source   : quest_rearch_production.centres, quest_rearch_production.centre_types, quest_rearch_production.centre_trade, quest_rearch_production.centre_projects, quest_rearch_production.projects, quest_rearch_production.programs, quest_rearch_production.phases
+-- Source   : quest_rearch_production.centres, quest_rearch_production.centre_types, quest_rearch_production.centre_trade, quest_rearch_production.centre_project, quest_rearch_production.projects, quest_rearch_production.programs, quest_rearch_production.phase_project, quest_rearch_production.phases
 -- Docs     : docs/dim_centre.md
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -49,10 +49,11 @@ LEFT JOIN (
             pr.name AS program_name,
             ph.id  AS phase_id,
             ph.name AS phase_name
-        FROM quest_rearch_production.centre_projects cp
+        FROM quest_rearch_production.centre_project cp
         JOIN quest_rearch_production.projects p  ON p.id  = cp.project_id
         JOIN quest_rearch_production.programs pr ON pr.id = p.program_id
-        JOIN quest_rearch_production.phases   ph ON ph.project_id = p.id
+        LEFT JOIN quest_rearch_production.phase_project pp ON pp.project_id = p.id
+        LEFT JOIN quest_rearch_production.phases ph ON ph.id = pp.phase_id
     ) base
     GROUP BY base.centre_id
 ) pagg ON pagg.centre_id = c.id
