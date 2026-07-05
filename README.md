@@ -8,14 +8,16 @@ SQL query pipeline that reads from the production MySQL source (`quest_rearch_pr
 
 | Path | Purpose |
 | --- | --- |
-| `queries/` | One `.sql` file per destination table. File stem = destination table name. |
-| `docs/` | Column-level documentation, mapping notes, and business logic per query. |
+| `queries/` | One `.sql` file per destination table, run automatically by `main.py`. File stem = destination table name. |
+| `docs/` | Column-level documentation, mapping notes, and business logic per query/script. |
 | `domain/` | Domain knowledge docs (learning outcomes, terminology, etc.). |
-| `python_query/` | Draft or exploratory SQL files not yet promoted to the main pipeline. |
+| `domain/draft_query/` | Draft, withdrawn, and archived SQL query files not currently run by the pipeline — see [Draft / In Progress](#draft--in-progress). |
+| `python_query/` | Standalone Python scripts for logic a single SQL file can't express (e.g. joining across the source and destination databases) or one-off utilities. **Not run automatically by `main.py`** — run separately. See [Cross-Database Python Scripts](#cross-database-python-scripts). |
 | `DB_Config/` | SSH private key files (`.pem`). **Not committed — add locally.** |
-| `main.py` | Pipeline entry point. |
+| `main.py` | Pipeline entry point. Scans `queries/*.sql` only. |
 | `db.py` | SSH tunnel, MySQL connection, fetch/write helpers. |
 | `config.py` | Environment variable loading and shared constants. |
+| `requirements.txt` | Python dependencies (`python-dotenv`, `pandas`, `paramiko`, `pymysql`). Install with `pip install -r requirements.txt`. |
 | `.env.example` | Template for required environment variables. Copy to `.env` and fill in. |
 | `.pipeline_state.json` | Auto-generated. Tracks last successful run timestamp per table for incremental runs. **Not committed.** |
 
@@ -84,6 +86,32 @@ python main.py --query dim_batch --dry-run
 python main.py --chunk-size 10000
 ```
 
+### Automatic retry on transient connection drops
+
+`main.py` retries a query run with exponential backoff (up to 3 attempts) if the SSH bastion tunnel or MySQL connection drops mid-run (`CR_SERVER_LOST` and similar transient errors). This is safe because each retry re-executes the query from scratch:
+
+- **Full runs** are only auto-retried when `--if-exists replace` (the default) — the first chunk of the retry re-`replace`s the table, safely overwriting any partial write from the failed attempt. If you explicitly pass `--if-exists append`, a transient failure is raised immediately instead of retried, to avoid duplicating rows already written.
+- **Incremental runs** are always auto-retried — each attempt deletes-then-reinserts the same changed IDs, so a retry after a partial write is idempotent.
+
+Non-transient errors (SQL syntax errors, missing tables/columns) are raised immediately without wasting retries.
+
+---
+
+## Running on a Schedule (cron)
+
+To run the pipeline unattended, use `cron` on the host machine. Two things matter that don't apply when running interactively:
+
+1. **Use the virtualenv's `python3` directly** — cron doesn't activate virtualenvs or source your shell profile, so a bare `python3` call will hit the system interpreter and fail on missing packages.
+2. **`cd` into the project directory first** — `config.py` calls `load_dotenv()` with no path, which searches for `.env` starting from the current working directory. Cron's default working directory is your home directory, not the project folder.
+
+Example crontab entry (daily at 2 AM, running the main pipeline followed by the `fact_lesson_progress` script, both logged to a file):
+
+```cron
+0 2 * * * cd "/path/to/Data Model" && "/path/to/Data Model/.venv/bin/python3" main.py --full-refresh && "/path/to/Data Model/.venv/bin/python3" python_query/fact_lesson_progress.py >> "/path/to/Data Model/logs/pipeline.log" 2>&1
+```
+
+Test the exact command manually in a shell first (not via cron) to confirm paths are correct before relying on the schedule.
+
 ---
 
 ## Incremental Runs
@@ -111,18 +139,18 @@ State is stored per-table in `.pipeline_state.json` (auto-created, git-ignored).
 | `dim_batch` | `quest_rearch_production.batches` | `id` | `batch_id` | `updated_at` |
 | `dim_centre` | `quest_rearch_production.centres` | `id` | `centre_id` | `updated_at` |
 | `dim_educator` | `quest_rearch_production.users` | `id` | `educator_id` | `updated_at` |
-| `dim_learner` | `quest_rearch_production.users` | `id` | `learner_id` | `updated_at` |
+| `dim_placement_learner` | `quest_rearch_production.users` | `id` | `learner_id` | `updated_at` |
 | `dim_phase` | `quest_rearch_production.phases` | `id` | `phase_id` | `updated_at` |
 | `dim_program` | `quest_rearch_production.programs` | `id` | `program_id` | `updated_at` |
 | `dim_project` | `quest_rearch_production.projects` | `id` | `project_id` | `updated_at` |
 | `dim_subject` | `quest_rearch_production.subjects` | `id` | `subject_id` | `updated_at` |
 | `fact_centre_visit` | `quest_rearch_production.mqops_centre_visits` | `id` | `centre_visit_id` | `updated_at` |
-| `fact_learning_event` | `quest_rearch_production.learning_activities` | `id` | `learning_activity_id` | `updated_at` |
 | `fact_ple_response` | `quest_rearch_production.ple_assessment_responses` | `id` | `response_id` | `updated_at` |
 | `fact_session` | `quest_rearch_production.mqops_session_trackers` | `id` | `id` | `created_at` |
-| `fact_skill_scores` | `quest_rearch_production.ple_skill_user` | `id` | `score_id` | `updated_at` |
 | `fact_placement` | `quest_rearch_production.placements` | `id` | `placement_id` | `updated_at` |
 | `fact_tot_session` | `quest_rearch_production.mqops_tot_summary` | `id` | `tot_summary_id` | `updated_at` |
+
+> `fact_learning_event` and `fact_skill_scores` were withdrawn from `queries/` back to `domain/draft_query/` for rework — see [Draft / In Progress](#draft--in-progress). `dim_geography` has no `@incremental` header yet and always runs as a full replace.
 
 ---
 
@@ -142,8 +170,9 @@ The pipeline detects this flag and connects to `ANALYTICS_DB` (destination) inst
 
 | Query / Table | Source table (in analytics DB) | Description |
 | --- | --- | --- |
-| `fact_lesson_progress` | `quest_analytics.main_learning_activity_myquest_ael_lesson` | Per-learner, per-lesson completion and time spent |
-| `fact_subject_progress` | `quest_analytics.main_learning_activity_myquest_ael` | Per-learner, per-subject completion and progress percentage |
+| `fact_subject_progress` | `quest_analytics.production_users_one_record`, `quest_analytics.user_addon` | Per-learner, per-subject progress unnested from a JSON column via `JSON_TABLE`, enriched with display attributes |
+
+> `fact_lesson_progress` is **not** a `@dest_only` query file — it needs data from both the source and destination databases at once, which no single SQL connection can join. See [Cross-Database Python Scripts](#cross-database-python-scripts).
 
 ---
 
@@ -184,6 +213,32 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 
 ---
 
+## Cross-Database Python Scripts
+
+Some tables need data from **both** the source and destination databases at once — for example, a set of IDs already computed in the destination that must drive a filter on the production source. No single SQL connection can `JOIN` across two separate database servers, so these can't be expressed as a `queries/*.sql` file.
+
+For this case, write a standalone script under `python_query/` instead. `python_query/fact_lesson_progress.py` is the reference example — see [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) for the full walkthrough. The pattern:
+
+1. Fetch the driving set of keys from the destination DB with `fetch()` (from `db.py`).
+2. Open one connection to the source DB with `_connect()`, load the keys into a `CREATE TEMPORARY TABLE`, and `JOIN` against it in a single query — far cheaper than one round trip per key.
+3. Stream the result in chunks (`SSCursor` + `fetchmany`) and write each chunk to the destination with `_write_with_conn`, reusing one persistent connection for the whole run (the same pattern `main.py` uses, to avoid opening a new SSH tunnel per chunk).
+
+**Important:** these scripts are **not** picked up by `main.py` — it only scans `.sql` files in `queries/`. Run them explicitly, e.g.:
+
+```bash
+python main.py --full-refresh && python python_query/fact_lesson_progress.py
+```
+
+Each script should also insert the repo root onto `sys.path` before importing `config`/`db`, so it works regardless of the current working directory it's invoked from:
+
+```python
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+```
+
+---
+
 ## Current Models
 
 ### Dimensions
@@ -193,8 +248,9 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | `dim_batch` | One row per batch-trade combination | [queries/dim_batch.sql](queries/dim_batch.sql) | [docs/dim_batch_query_columns.md](docs/dim_batch_query_columns.md) |
 | `dim_centre` | One row per centre | [queries/dim_centre.sql](queries/dim_centre.sql) | [docs/dim_centre.md](docs/dim_centre.md) |
 | `dim_educator` | One row per educator | [queries/dim_educator.sql](queries/dim_educator.sql) | [docs/dim_educator.md](docs/dim_educator.md) |
-| `dim_learner` | One row per learner | [queries/dim_learner.sql](queries/dim_learner.sql) | [docs/dim_learner_query_columns.md](docs/dim_learner_query_columns.md) |
+| `dim_geography` | One row per centre (centre-state-district lookup) | [queries/dim_geography.sql](queries/dim_geography.sql) | [docs/dim_geography.md](docs/dim_geography.md) |
 | `dim_phase` | One row per phase | [queries/dim_phase.sql](queries/dim_phase.sql) | [docs/dim_phase.md](docs/dim_phase.md) |
+| `dim_placement_learner` | One row per learner | [queries/dim_placement_learner.sql](queries/dim_placement_learner.sql) | [docs/dim_placement_learner_query_columns.md](docs/dim_placement_learner_query_columns.md) |
 | `dim_program` | One row per program | [queries/dim_program.sql](queries/dim_program.sql) | [docs/dim_program.md](docs/dim_program.md) |
 | `dim_project` | One row per project | [queries/dim_project.sql](queries/dim_project.sql) | [docs/dim_project.md](docs/dim_project.md) |
 | `dim_subject` | One row per subject | [queries/dim_subject.sql](queries/dim_subject.sql) | [docs/dim_subject.md](docs/dim_subject.md) |
@@ -204,23 +260,26 @@ Every successful run appends a row to the `pipeline_run_log` table in the analyt
 | Model | Grain | Query | Documentation |
 | --- | --- | --- | --- |
 | `fact_centre_visit` | One row per centre visit-centre-related user combination | [queries/fact_centre_visit.sql](queries/fact_centre_visit.sql) | [docs/fact_centre_visit.md](docs/fact_centre_visit.md) |
-| `fact_learning_event` | One row per completed learning activity | [queries/fact_learning_event.sql](queries/fact_learning_event.sql) | [docs/fact_learning_event.md](docs/fact_learning_event.md) |
-| `fact_lesson_progress` | One row per learner-lesson combination | [queries/fact_lesson_progress.sql](queries/fact_lesson_progress.sql) | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
+| `fact_lesson_progress` | One row per completed learning activity for a known learner-subject pair | [python_query/fact_lesson_progress.py](python_query/fact_lesson_progress.py) — cross-database script, not a `queries/*.sql` file | [docs/fact_lesson_progress.md](docs/fact_lesson_progress.md) |
 | `fact_ple_response` | One row per PLE assessment response | [queries/fact_ple_response.sql](queries/fact_ple_response.sql) | [docs/fact_ple_response.md](docs/fact_ple_response.md) |
 | `fact_session` | One row per session tracker record | [queries/fact_session.sql](queries/fact_session.sql) | [docs/fact_session.md](docs/fact_session.md) |
-| `fact_skill_scores` | One row per skill-user score | [queries/fact_skill_scores.sql](queries/fact_skill_scores.sql) | [docs/fact_skill_scores.md](docs/fact_skill_scores.md) |
 | `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
 | `fact_placement` | One row per learner per placement type (3 types via UNION ALL) | [queries/fact_placement.sql](queries/fact_placement.sql) | [docs/fact_placement.md](docs/fact_placement.md) |
 | `fact_tot_session` | One row per ToT summary-centre/stakeholder row | [queries/fact_tot_session.sql](queries/fact_tot_session.sql) | [docs/fact_tot_session.md](docs/fact_tot_session.md) |
 
 ### Draft / In Progress
 
-| Model | Status | File |
-| --- | --- | --- |
-| `draft_dim_geography` | Empty stub | [queries/draft_dim_geography.sql](queries/draft_dim_geography.sql) |
-| `draft_fact_course_progress` | Draft / exploratory | [python_query/draft_fact_course_progress.sql](python_query/draft_fact_course_progress.sql) |
-| `draft_fact_lesson_progress` | Draft / exploratory | [python_query/draft_fact_lesson_progress.sql](python_query/draft_fact_lesson_progress.sql) |
-| `draft_fact_subject_progress` | Draft / exploratory | [python_query/draft_fact_subject_progress.sql](python_query/draft_fact_subject_progress.sql) |
+All draft, withdrawn, and superseded query files live in `domain/draft_query/`.
+
+| File | Status |
+| --- | --- |
+| `draft_fact_course_progress.sql` | Draft / exploratory — not yet promoted to `queries/`. |
+| `draft_fact_learning_event.sql` | Withdrawn from `queries/fact_learning_event.sql` for rework. Previously live — see [docs/fact_learning_event.md](docs/fact_learning_event.md) for the last-known-good version's documentation. |
+| `draft_fact_lesson_progress.sql` | Superseded — `fact_lesson_progress` is now built by [python_query/fact_lesson_progress.py](python_query/fact_lesson_progress.py) instead (see [Cross-Database Python Scripts](#cross-database-python-scripts)). Kept for reference only. |
+| `draft_fact_skill_scores.sql` | Withdrawn from `queries/fact_skill_scores.sql` for rework. Previously live — see [docs/fact_skill_scores.md](docs/fact_skill_scores.md) for the last-known-good version's documentation. |
+| `draft_fact_subject_progress.sql` | Draft / exploratory — an earlier, simpler approach to subject progress. Superseded by the live `queries/fact_subject_progress.sql`. |
+| `old_fact_subject_progress.sql` | Previous version of `fact_subject_progress`, kept for reference. |
+| `archive_fact_lesson_progress.sql` | Archived version of an earlier `fact_lesson_progress` implementation, kept for reference. |
 
 ---
 

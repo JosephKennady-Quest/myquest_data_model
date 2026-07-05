@@ -1,14 +1,14 @@
 -- @incremental source_table=quest_rearch_production.users id_col=id updated_at_col=updated_at dest_id_col=learner_id
 -- ─────────────────────────────────────────────────────────────────────────────
--- Table    : dim_learner
+-- Table    : dim_placement_learner
 -- Grain    : intended one row per learner_id (fan-out risk from centre_project)
 -- Mode     : incremental
 -- Source   : quest_rearch_production.users, quest_rearch_production.student_details, quest_rearch_production.educational_qualifications, quest_rearch_production.centre_project, quest_rearch_production.projects, quest_rearch_production.programs, quest_rearch_production.placements, quest_rearch_production.placement_status
--- Docs     : docs/dim_learner_query_columns.md
+-- Docs     : docs/dim_placement_learner_query_columns.md
 -- ─────────────────────────────────────────────────────────────────────────────
 
 /*
-    dim_learner
+    dim_placement_learner
     ---------------------------------------------------------------------------
     Purpose:
         Builds the learner dimension from production user, student profile,

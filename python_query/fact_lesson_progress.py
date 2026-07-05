@@ -11,6 +11,13 @@ The pairs are loaded into a temporary table on the source connection so the
 lesson-level pull is a single indexed JOIN instead of one round trip per pair.
 """
 
+import sys
+from pathlib import Path
+
+# Allow running this script directly (e.g. `python python_query/fact_lesson_progress.py`)
+# without the repo root being on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import pandas as pd
 import pymysql
 
