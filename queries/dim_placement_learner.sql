@@ -42,6 +42,11 @@ SELECT
     u.id AS learner_id,
     eq.name AS educational_qualification,
     u.is_ple,
+    u.gender,
+    c.name AS centre_name,
+    ct.name AS centre_type,
+    u.type AS learner_type,
+    s.name AS centre_state,
     sd.trade_id,
     pd.employment_status_at_enrolment,
     sd.guardian_income AS family_income_band,
@@ -51,13 +56,19 @@ SELECT
 FROM quest_rearch_production.users AS u
 JOIN quest_rearch_production.student_details AS sd
     ON sd.user_id = u.id
+JOIN quest_rearch_production.centres AS c
+    ON c.id = u.centre_id
 JOIN quest_rearch_production.centre_project AS cp
-    ON cp.centre_id = u.centre_id
+    ON cp.centre_id = c.id
+JOIN quest_rearch_production.states AS s
+    ON s.id = c.state_id
+JOIN quest_rearch_production.centre_types AS ct
+    ON ct.id = c.centre_type_id
 JOIN quest_rearch_production.projects AS p2
     ON p2.id = cp.project_id
 JOIN quest_rearch_production.programs AS p
     ON p.id = p2.program_id
-JOIN quest_rearch_production.educational_qualifications AS eq
+LEFT JOIN quest_rearch_production.educational_qualifications AS eq
     ON eq.id = sd.educational_qualification_id
 LEFT JOIN (
     /*
@@ -87,4 +98,6 @@ LEFT JOIN (
     ) AS ranked_placements
     WHERE rn = 1
 ) AS pd
-    ON pd.user_id = u.id;
+    ON pd.user_id = u.id
+WHERE u.status = 1
+    AND u.deleted_at IS NULL;
