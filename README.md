@@ -110,10 +110,10 @@ To run the pipeline unattended, use `cron` on the host machine. Two things matte
 1. **Use the virtualenv's `python3` directly** — cron doesn't activate virtualenvs or source your shell profile, so a bare `python3` call will hit the system interpreter and fail on missing packages.
 2. **`cd` into the project directory first** — `config.py` calls `load_dotenv()` with no path, which searches for `.env` starting from the current working directory. Cron's default working directory is your home directory, not the project folder.
 
-Example crontab entry (daily at 2 AM, running the main pipeline followed by the `fact_lesson_progress` script, both logged to a file):
+Example crontab entry (daily at 2 AM, running the main pipeline, then `fact_lesson_progress`, then `mat_learning_activity` — in that order, since each depends on tables built by the previous step — all logged to a file):
 
 ```cron
-0 2 * * * cd "/path/to/Data Model" && "/path/to/Data Model/.venv/bin/python3" main.py --full-refresh && "/path/to/Data Model/.venv/bin/python3" python_query/fact_lesson_progress.py >> "/path/to/Data Model/logs/pipeline.log" 2>&1
+0 2 * * * cd "/path/to/Data Model" && "/path/to/Data Model/.venv/bin/python3" main.py --full-refresh && "/path/to/Data Model/.venv/bin/python3" python_query/fact_lesson_progress.py && "/path/to/Data Model/.venv/bin/python3" python_query/mat_learning_activity.py >> "/path/to/Data Model/logs/pipeline.log" 2>&1
 ```
 
 Test the exact command manually in a shell first (not via cron) to confirm paths are correct before relying on the schedule.
@@ -229,10 +229,10 @@ For this case, write a standalone script under `python_query/` instead. `python_
 2. Open one connection to the source DB with `_connect()`, load the keys into a `CREATE TEMPORARY TABLE`, and `JOIN` against it in a single query — far cheaper than one round trip per key.
 3. Stream the result in chunks (`SSCursor` + `fetchmany`) and write each chunk to the destination with `_write_with_conn`, reusing one persistent connection for the whole run (the same pattern `main.py` uses, to avoid opening a new SSH tunnel per chunk).
 
-**Important:** these scripts are **not** picked up by `main.py` — it only scans `.sql` files in `queries/`. Run them explicitly, e.g.:
+**Important:** these scripts are **not** picked up by `main.py` — it only scans `.sql` files in `queries/`. Run them explicitly, and in dependency order:
 
 ```bash
-python main.py --full-refresh && python python_query/fact_lesson_progress.py
+python main.py --full-refresh && python python_query/fact_lesson_progress.py && python python_query/mat_learning_activity.py
 ```
 
 Each script should also insert the repo root onto `sys.path` before importing `config`/`db`, so it works regardless of the current working directory it's invoked from:
@@ -242,6 +242,8 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 ```
+
+`python_query/mat_learning_activity.py` is a second example — it doesn't need the temp-table bridging pattern above (all three tables it reads live in the destination DB, so it's a same-database join, not cross-database), but it still can't be a `queries/*.sql` file: it must run strictly after **both** `main.py` (which builds `dim_placement_learner` and `dim_subject`) and `fact_lesson_progress.py` (which builds `fact_lesson_progress`), and putting it in `queries/` would let a bare `main.py --full-refresh` try to run it automatically before those dependencies are ready. See [docs/mat_learning_activity.md](docs/mat_learning_activity.md).
 
 ---
 
@@ -272,6 +274,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 | `fact_subject_progress` | One row per learner-subject combination | [queries/fact_subject_progress.sql](queries/fact_subject_progress.sql) | [docs/fact_subject_progress.md](docs/fact_subject_progress.md) |
 | `fact_placement` | One row per learner per placement type (3 types via UNION ALL) | [queries/fact_placement.sql](queries/fact_placement.sql) | [docs/fact_placement.md](docs/fact_placement.md) |
 | `fact_tot_session` | One row per ToT summary-centre/stakeholder row | [queries/fact_tot_session.sql](queries/fact_tot_session.sql) | [docs/fact_tot_session.md](docs/fact_tot_session.md) |
+
+### Materialized / Derived
+
+Tables built by joining other destination-DB tables together after the base pipeline run, rather than from a production source query. Run last, and in dependency order — see [Cross-Database Python Scripts](#cross-database-python-scripts).
+
+| Model | Grain | Query | Documentation |
+| --- | --- | --- | --- |
+| `mat_learning_activity` | One row per `fact_lesson_progress` row, enriched with learner and subject attributes | [python_query/mat_learning_activity.py](python_query/mat_learning_activity.py) — joins `fact_lesson_progress` + `dim_placement_learner` + `dim_subject`, all destination-only | [docs/mat_learning_activity.md](docs/mat_learning_activity.md) |
 
 ### Draft / In Progress
 
