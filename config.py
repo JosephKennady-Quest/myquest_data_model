@@ -8,8 +8,17 @@ load_dotenv()
 _PIPELINE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_CONFIG_DIR = os.path.join(_PIPELINE_DIR, "DB_Config")
 
+def _is_true(env_var: str) -> bool:
+    return os.getenv(env_var, "false").strip().lower() in ("1", "true", "yes")
+
+
 CONFIG = {
     "source": {
+        # When true, connect straight to remote_bind_address:remote_bind_port
+        # (no SSH tunnel). Only safe when the pipeline runs on a host that
+        # already has direct network access to the DB (e.g. inside the same
+        # VPC) — otherwise leave this false and connect via the SSH bastion.
+        "direct_connect": _is_true("SOURCE_DIRECT_CONNECT"),
         "ssh": {
             "host":                os.getenv("SOURCE_SSH_HOST"),
             "port":                int(os.getenv("SOURCE_SSH_PORT", "22")),
@@ -25,6 +34,7 @@ CONFIG = {
         },
     },
     "destination": {
+        "direct_connect": _is_true("DEST_DIRECT_CONNECT"),
         "ssh": {
             "host":                os.getenv("DEST_SSH_HOST"),
             "port":                int(os.getenv("DEST_SSH_PORT", "22")),

@@ -130,15 +130,39 @@ def _tunnel(ssh: Dict[str, Any]):
 @contextmanager
 def _connect(cfg: Dict[str, Any]):
     """
-    Open an SSH tunnel, then connect pymysql to the forwarded local port.
+    Connect pymysql to the database, either directly or through an SSH tunnel.
 
     cfg shape:
         {
+          "direct_connect": bool,  # optional, defaults to False
           "ssh": { host, port, username, pkey_path,
                    remote_bind_address, remote_bind_port },
           "db":  { user, password, database }
         }
+
+    When cfg["direct_connect"] is True, connects straight to
+    ssh.remote_bind_address:remote_bind_port — no SSH tunnel is opened. Only
+    safe when the pipeline runs on a host that already has direct network
+    access to the database (e.g. inside the same VPC as the RDS instance).
     """
+    if cfg.get("direct_connect"):
+        conn = pymysql.connect(
+            host=cfg["ssh"]["remote_bind_address"],
+            port=cfg["ssh"]["remote_bind_port"],
+            user=cfg["db"]["user"],
+            password=cfg["db"]["password"],
+            database=cfg["db"]["database"],
+            charset="utf8mb4",
+            connect_timeout=30,
+            read_timeout=3600,   # allow up to 1h for large streaming queries
+            write_timeout=3600,
+        )
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
+
     with _tunnel(cfg["ssh"]) as tunnel:
         conn = pymysql.connect(
             host="127.0.0.1",

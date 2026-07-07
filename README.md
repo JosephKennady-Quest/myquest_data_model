@@ -44,6 +44,12 @@ cp .env.example .env
 
 Place your `.pem` key files inside `DB_Config/`. The file names must match what you set in `.env` for `SOURCE_SSH_PKEY_FILE` and `DEST_SSH_PKEY_FILE`.
 
+### 4. Direct connection (skip the SSH tunnel)
+
+By default, `db.py` opens an SSH tunnel to a bastion host before connecting to MySQL — this is required when running from a machine outside the database's network (e.g. a laptop). If the pipeline instead runs on a host that already has direct network access to the database (e.g. an EC2 instance inside the same VPC as the RDS instance), the tunnel is unnecessary overhead and an extra point of failure.
+
+Set `SOURCE_DIRECT_CONNECT=true` and/or `DEST_DIRECT_CONNECT=true` in `.env` to connect straight to `SOURCE_RDS_HOST`/`DEST_RDS_HOST` instead of tunneling through `SOURCE_SSH_HOST`/`DEST_SSH_HOST`. The two databases are configured independently, so you can mix modes (e.g. direct to the destination DB, tunneled to the source DB) if only one is reachable directly from where the pipeline runs. Leave both unset/`false` (the default) to keep the existing SSH-tunnel behavior.
+
 ---
 
 ## Running the Pipeline
